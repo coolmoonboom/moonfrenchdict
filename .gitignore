@@ -1,0 +1,21 @@
+# Gradle / Android
+**/build/
+.gradle/
+.kotlin/
+local.properties
+*.iml
+.idea/
+.cxx/
+
+# Android artifacts and signing
+**/*.keystore
+**/*.jks
+key.properties
+
+# Logs and OS
+*.log
+.DS_Store
+
+# Python (tesseract OCR setup)
+__pycache__/
+*.pyc
