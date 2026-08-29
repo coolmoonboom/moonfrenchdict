@@ -62,11 +62,19 @@ android/
 
 ## 词典数据
 
-统一单文件格式 `[word, pos, en, zh]`，36 万+ 词条：
+采用**预编译 SQLite 数据库**（`assets/dictionary.db`），首次启动拷贝到应用目录，后续启动直接打开、零解析。
+
+数据源（统一格式 `[word, pos, en, zh]`，36 万+ 词条）：
 
 - 法语-中文释义：开源法汉词典（FreeDict / Stardict 系社区数据）
 - 法语-英文释义：FreeDict 词典数据
 - 本地无中文释义时：由 AI 界面中用户配置的模型生成中文翻译，未配置时回退 MyMemory 免费翻译
+
+词典数据库由 `tools/build_dict_db.py` 从 `tools/data/word.sj` 构建（含 3-gram 倒排索引，加速模糊/近似搜索）：
+
+```bash
+python3 tools/build_dict_db.py
+```
 
 ## License
 

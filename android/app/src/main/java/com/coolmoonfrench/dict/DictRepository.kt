@@ -6,8 +6,6 @@ import android.database.sqlite.SQLiteOpenHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.Locale
 import kotlin.math.abs
 
@@ -37,31 +35,44 @@ data class DictEntry(
 /**
  * 词典仓库。
  *
- * 首次启动时把 assets 中的词库导入本地 SQLite（databases/dictionary.db），
- * 后续启动直接打开 SQLite，不再每次解析 JSON，大幅提升加载速度。
+ * 使用预构建的 SQLite 词典库（tools/build_dict_db.py 生成 dictionary.db）：
+ * 首次启动把 assets 中的 dictionary.db 拷贝到应用数据库目录，
+ * 后续启动直接打开，无需运行时解析/导入，加载速度最快。
  */
 class DictRepository(private val context: Context) {
 
     private val dbHelper by lazy { DictDbHelper(context) }
 
-    // 供模糊/相似搜索的轻量内存索引（norm -> id）
-    private var normList: MutableList<String> = mutableListOf()
+    // 供模糊/相似搜索的轻量内存索引（ngram 退化全量扫描时使用）
+    private var normSet: Set<String> = emptySet()
 
     suspend fun load() = withContext(Dispatchers.IO) {
+        ensureDatabase()
         val db = dbHelper.readableDatabase
-        val count = db.rawQuery("SELECT COUNT(*) FROM dict", null).use { c ->
-            c.moveToFirst()
-            c.getInt(0)
-        }
-        if (count == 0) {
-            dbHelper.importFromAssets()
-        }
-        // 加载模糊/相似搜索所需的内存 norm 列表
-        normList = mutableListOf()
-        db.rawQuery("SELECT norm FROM dict", null).use { c ->
-            while (c.moveToNext()) {
-                normList.add(c.getString(0))
+        // 加载全部 norm 到内存 Set，作为 3-gram 缺失/退化时的全量候选
+        normSet = buildSet {
+            db.rawQuery("SELECT norm FROM dict", null).use { c ->
+                while (c.moveToNext()) {
+                    add(c.getString(0))
+                }
             }
+        }
+    }
+
+    /**
+     * 首次启动时把 assets 中的预构建 dictionary.db 拷贝到应用数据库目录。
+     * 预构建库已含 dict 表与 3-gram 索引，无需运行时解析/导入。
+     */
+    private fun ensureDatabase() {
+        try {
+            val dbFile = context.getDatabasePath(DB_NAME)
+            if (dbFile.exists()) return
+            dbFile.parentFile?.mkdirs()
+            context.assets.open("dictionary.db").use { input ->
+                dbFile.outputStream().use { output -> input.copyTo(output) }
+            }
+        } catch (_: Exception) {
+            // assets 拷贝失败时回退：允许空库，查询返回空
         }
     }
 
@@ -112,15 +123,60 @@ class DictRepository(private val context: Context) {
     }
 
     /**
-     * 改进的模糊搜索：编辑距离归一化排序，避免无关词
+     * 3-gram 候选缩小：取查询词各 gram 的 posting 并集，保留共享 gram 数 ≥ MIN_SHARED 的候选。
+     * 兼顾拼错容错（并集保留共享部分 gram 的词）与候选规模（阈值过滤偶然共享）。
+     */
+    private fun ngramCandidates(query: String): Set<String> {
+        val norm = normalize(query)
+        if (norm.length < 2) return emptySet()
+        val db = dbHelper.readableDatabase
+        val hasNgram = db.rawQuery(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dict_ngram'", null
+        ).use { it.moveToFirst() }
+        if (!hasNgram) return emptySet()
+        val grams = mutableSetOf<String>()
+        val padded = " $norm "
+        for (i in 0 until padded.length - 2) {
+            grams.add(padded.substring(i, i + 3))
+        }
+        // 统计每个候选 id 与查询共享的 gram 数
+        val sharedCount = HashMap<Int, Int>()
+        for (g in grams) {
+            db.rawQuery("SELECT ids FROM dict_ngram WHERE gram = ?", arrayOf(g)).use { c ->
+                if (c.moveToFirst()) {
+                    val blob = c.getBlob(0)
+                    for (k in 0 until blob.size / 4) {
+                        val id = decodeInt32(blob, k * 4)
+                        sharedCount[id] = (sharedCount[id] ?: 0) + 1
+                    }
+                }
+            }
+        }
+        // 保留共享 gram 数 ≥ MIN_SHARED 的候选（3 为经验阈值，兼顾容错与规模）
+        val candidateIds = sharedCount.filterValues { it >= MIN_SHARED_GRAMS }.keys
+        if (candidateIds.isEmpty()) return emptySet()
+        // id -> norm 映射，返回 norm 候选
+        val norms = mutableSetOf<String>()
+        for (id in candidateIds) {
+            db.rawQuery("SELECT norm FROM dict WHERE id = ?", arrayOf(id.toString())).use { c ->
+                if (c.moveToFirst()) norms.add(c.getString(0))
+            }
+        }
+        return norms
+    }
+
+    /**
+     * 改进的模糊搜索：3-gram 缩小候选 + 编辑距离归一化排序，避免无关词
      */
     fun fuzzySearch(query: String, maxDist: Int = 2, maxResults: Int = 10): List<Pair<DictEntry, Int>> {
         val norm = normalize(query)
         if (norm.isEmpty()) return emptyList()
-        val scored = mutableListOf<Pair<Int, Int>>() // (score, index)
+        val db = dbHelper.readableDatabase
+        val candidates = ngramCandidates(norm)
+        val scored = mutableListOf<Pair<Int, String>>() // (score, norm)
 
-        for (i in normList.indices) {
-            val candidate = normList[i]
+        val iterate = if (candidates.isNotEmpty()) candidates else normSet
+        for (candidate in iterate) {
             if (abs(candidate.length - norm.length) > maxDist) continue
             val d = levenshtein(norm, candidate)
             if (d <= maxDist) {
@@ -128,38 +184,37 @@ class DictRepository(private val context: Context) {
                 val maxLen = maxOf(norm.length, candidate.length).coerceAtLeast(1)
                 val score = d * 1000 + abs(candidate.length - norm.length)
                 if (d * 10 <= maxLen * 3) {
-                    scored.add(score to i)
+                    scored.add(score to candidate)
                 }
             }
         }
         scored.sortBy { it.first }
-        val db = dbHelper.readableDatabase
-        return scored.take(maxResults).map { (s, i) ->
-            val entry = getEntryById(db, normList[i])
-            entry to (s / 1000)
-        }.filter { it.first != null }.map { it.first!! to it.second }
+        return scored.take(maxResults).mapNotNull { (s, n) ->
+            getEntryById(db, n)?.let { it to (s / 1000) }
+        }
     }
 
     /**
-     * 近似词：编辑距离较近的词（展示用，阈值宽松）
+     * 近似词：3-gram 缩小候选 + 编辑距离较近的词（展示用，阈值宽松）
      */
     fun similarWords(query: String, maxResults: Int = 6): List<DictEntry> {
         val norm = normalize(query)
         if (norm.isEmpty()) return emptyList()
-        val scored = mutableListOf<Pair<Int, Int>>()
-        for (i in normList.indices) {
-            val candidate = normList[i]
+        val db = dbHelper.readableDatabase
+        val candidates = ngramCandidates(norm)
+        val scored = mutableListOf<Pair<Int, String>>()
+        val iterate = if (candidates.isNotEmpty()) candidates else normSet
+        for (candidate in iterate) {
             if (candidate == norm) continue
             if (abs(candidate.length - norm.length) > 3) continue
             val d = levenshtein(norm, candidate)
             if (d <= 2 && d <= maxOf(1, norm.length / 4)) {
-                scored.add(d to i)
+                scored.add(d to candidate)
             }
         }
         scored.sortBy { it.first }
-        val db = dbHelper.readableDatabase
-        return scored.take(maxResults).mapNotNull { (d, i) ->
-            getEntryById(db, normList[i])
+        return scored.take(maxResults).mapNotNull { (d, n) ->
+            getEntryById(db, n)
         }
     }
 
@@ -267,6 +322,14 @@ class DictRepository(private val context: Context) {
         return null
     }
 
+    /** 大端序解码 4 字节无符号整数（与 tools/build_dict_db.py struct.pack('>I') 对应） */
+    private fun decodeInt32(blob: ByteArray, offset: Int): Int {
+        return ((blob[offset].toInt() and 0xFF) shl 24) or
+            ((blob[offset + 1].toInt() and 0xFF) shl 16) or
+            ((blob[offset + 2].toInt() and 0xFF) shl 8) or
+            (blob[offset + 3].toInt() and 0xFF)
+    }
+
     // ---------- 收藏 ----------
 
     private val prefs by lazy {
@@ -342,6 +405,9 @@ class DictRepository(private val context: Context) {
         const val DB_NAME = "dictionary.db"
         const val DB_VERSION = 4
 
+        /** 3-gram 候选要求与查询共享的最小 gram 数（经验阈值） */
+        private const val MIN_SHARED_GRAMS = 3
+
         private val ACCENT_MAP = mapOf(
             'à' to 'a', 'â' to 'a', 'ä' to 'a', 'æ' to 'a',
             'é' to 'e', 'è' to 'e', 'ê' to 'e', 'ë' to 'e',
@@ -405,7 +471,8 @@ class DictRepository(private val context: Context) {
 }
 
 /**
- * SQLite 帮助类：负责建表与首次从 assets 导入词库。
+ * SQLite 帮助类：打开预构建的词典数据库（由 tools/build_dict_db.py 生成）。
+ * 数据库文件在首次启动时由 ensureDatabase() 从 assets 拷贝到应用目录。
  */
 private class DictDbHelper(context: Context) :
     SQLiteOpenHelper(context, DictRepository.DB_NAME, null, DictRepository.DB_VERSION) {
@@ -413,73 +480,10 @@ private class DictDbHelper(context: Context) :
     private val appContext = context.applicationContext
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            "CREATE TABLE IF NOT EXISTS dict (" +
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                "word TEXT NOT NULL, " +
-                "norm TEXT NOT NULL, " +
-                "pos TEXT, " +
-                "meaning TEXT, " +
-                "zh TEXT, " +
-                "en TEXT, " +
-                "stem TEXT)"
-        )
-        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_dict_norm ON dict(norm)")
-        db.execSQL("CREATE INDEX IF NOT EXISTS idx_dict_stem ON dict(stem)")
+        // 预构建库无需建表；若库缺失则空表兜底
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // 简单处理：升级时重建
-        db.execSQL("DROP TABLE IF EXISTS dict")
-        onCreate(db)
-    }
-
-    fun importFromAssets() {
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            importSjDict(db, "word.sj")
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
-    }
-
-    private fun importSjDict(db: SQLiteDatabase, filename: String) {
-        try {
-            val stream = appContext.assets.open(filename)
-            val reader = BufferedReader(InputStreamReader(stream, "UTF-8"))
-            val text = reader.readText()
-            reader.close()
-            val arr = JSONArray(text)
-            for (i in 0 until arr.length()) {
-                val item = arr.getJSONArray(i)
-                val word = item.optString(0, "").trim()
-                val pos = item.optString(1, "").trim()
-                val en = item.optString(2, "").trim()
-                val zh = item.optString(3, "").trim()
-                if (word.isNotEmpty()) {
-                    insertIfAbsent(db, word, pos, en, zh)
-                }
-            }
-        } catch (_: Exception) {
-            // file not found, skip
-        }
-    }
-
-    private fun insertIfAbsent(db: SQLiteDatabase, word: String, pos: String, en: String, zh: String) {
-        val norm = DictRepository.normalize(word)
-        if (norm.isEmpty()) return
-        val stem = DictRepository.stem(word)
-        val cv = android.content.ContentValues().apply {
-            put("word", word)
-            put("norm", norm)
-            put("pos", pos)
-            put("zh", zh)
-            put("en", en)
-            put("meaning", DictEntry.combineMeaning(zh, en, pos))
-            put("stem", stem)
-        }
-        db.insertWithOnConflict("dict", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
+        // 预构建库版本由 ensureDatabase 的元数据控制，此处无需处理
     }
 }
