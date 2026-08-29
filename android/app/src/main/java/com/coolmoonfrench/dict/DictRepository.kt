@@ -43,30 +43,50 @@ class DictRepository(private val context: Context) {
 
     private val dbHelper by lazy { DictDbHelper(context) }
 
-    // 供模糊/相似搜索的轻量内存索引（ngram 退化全量扫描时使用）
+    // 供模糊/相似搜索的轻量内存索引
     private var normSet: Set<String> = emptySet()
+    private var normById: HashMap<Int, String> = HashMap()
+    private var idByNorm: HashMap<String, Int> = HashMap()
 
     suspend fun load() = withContext(Dispatchers.IO) {
         ensureDatabase()
         val db = dbHelper.readableDatabase
-        // 加载全部 norm 到内存 Set，作为 3-gram 缺失/退化时的全量候选
-        normSet = buildSet {
-            db.rawQuery("SELECT norm FROM dict", null).use { c ->
-                while (c.moveToNext()) {
-                    add(c.getString(0))
-                }
+        // 加载全部 norm 到内存，模糊/近似搜索直接基于内存候选，避免逐条查库
+        val nMap = HashMap<Int, String>()
+        val normSetLocal = HashSet<String>()
+        db.rawQuery("SELECT id, norm FROM dict", null).use { c ->
+            while (c.moveToNext()) {
+                val id = c.getInt(0)
+                val norm = c.getString(1)
+                nMap[id] = norm
+                normSetLocal.add(norm)
             }
         }
+        normById = nMap
+        idByNorm = HashMap<String, Int>().apply {
+            for ((id, norm) in nMap) put(norm, id)
+        }
+        normSet = normSetLocal
     }
 
     /**
      * 首次启动时把 assets 中的预构建 dictionary.db 拷贝到应用数据库目录。
      * 预构建库已含 dict 表与 3-gram 索引，无需运行时解析/导入。
+     * 若已存在旧版库（缺 dict_ngram 表或结构不兼容），删除后重新拷贝。
      */
     private fun ensureDatabase() {
         try {
             val dbFile = context.getDatabasePath(DB_NAME)
-            if (dbFile.exists()) return
+            if (dbFile.exists()) {
+                // 校验旧库是否为预构建版本（含 dict_ngram 表）；否则删除重拷
+                val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
+                val hasNgram = db.rawQuery(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dict_ngram'", null
+                ).use { it.moveToFirst() }
+                db.close()
+                if (hasNgram) return
+                dbFile.delete()
+            }
             dbFile.parentFile?.mkdirs()
             context.assets.open("dictionary.db").use { input ->
                 dbFile.outputStream().use { output -> input.copyTo(output) }
@@ -76,22 +96,29 @@ class DictRepository(private val context: Context) {
         }
     }
 
+    /** 从查询游标当前行构造 DictEntry（无 meaning 列，现算释义） */
+    private fun rowToEntry(c: android.database.Cursor): DictEntry {
+        val word = c.getString(0)
+        val pos = c.getString(1)
+        val zh = c.getString(2)
+        val en = c.getString(3)
+        return DictEntry(
+            word = word,
+            pos = pos,
+            zh = zh,
+            en = en,
+            meaning = DictEntry.combineMeaning(zh, en, pos)
+        )
+    }
+
     fun lookupExact(query: String): List<DictEntry> {
         val norm = normalize(query)
         if (norm.isEmpty()) return emptyList()
         val db = dbHelper.readableDatabase
         val result = mutableListOf<DictEntry>()
-        db.rawQuery("SELECT word, pos, meaning, zh, en FROM dict WHERE norm = ?", arrayOf(norm)).use { c ->
+        db.rawQuery("SELECT word, pos, zh, en FROM dict WHERE norm = ?", arrayOf(norm)).use { c ->
             while (c.moveToNext()) {
-                result.add(
-                    DictEntry(
-                        word = c.getString(0),
-                        meaning = c.getString(2),
-                        pos = c.getString(1),
-                        zh = c.getString(3),
-                        en = c.getString(4)
-                    )
-                )
+                result.add(rowToEntry(c))
             }
         }
         return result
@@ -104,19 +131,11 @@ class DictRepository(private val context: Context) {
         val db = dbHelper.readableDatabase
         val result = mutableListOf<DictEntry>()
         db.rawQuery(
-            "SELECT word, pos, meaning, zh, en FROM dict WHERE norm LIKE ? ESCAPE '\\' ORDER BY length(norm), word LIMIT ?",
+            "SELECT word, pos, zh, en FROM dict WHERE norm LIKE ? ESCAPE '\\' ORDER BY length(norm), word LIMIT ?",
             arrayOf("$escaped%", maxResults.toString())
         ).use { c ->
             while (c.moveToNext()) {
-                result.add(
-                    DictEntry(
-                        word = c.getString(0),
-                        meaning = c.getString(2),
-                        pos = c.getString(1),
-                        zh = c.getString(3),
-                        en = c.getString(4)
-                    )
-                )
+                result.add(rowToEntry(c))
             }
         }
         return result
@@ -124,7 +143,7 @@ class DictRepository(private val context: Context) {
 
     /**
      * 3-gram 候选缩小：取查询词各 gram 的 posting 并集，保留共享 gram 数 ≥ MIN_SHARED 的候选。
-     * 兼顾拼错容错（并集保留共享部分 gram 的词）与候选规模（阈值过滤偶然共享）。
+     * 返回候选 norm 集合（内存映射），避免逐 id 查库。
      */
     private fun ngramCandidates(query: String): Set<String> {
         val norm = normalize(query)
@@ -155,12 +174,10 @@ class DictRepository(private val context: Context) {
         // 保留共享 gram 数 ≥ MIN_SHARED 的候选（3 为经验阈值，兼顾容错与规模）
         val candidateIds = sharedCount.filterValues { it >= MIN_SHARED_GRAMS }.keys
         if (candidateIds.isEmpty()) return emptySet()
-        // id -> norm 映射，返回 norm 候选
-        val norms = mutableSetOf<String>()
+        // 通过内存映射 id -> norm，避免逐 id 查库
+        val norms = HashSet<String>(candidateIds.size)
         for (id in candidateIds) {
-            db.rawQuery("SELECT norm FROM dict WHERE id = ?", arrayOf(id.toString())).use { c ->
-                if (c.moveToFirst()) norms.add(c.getString(0))
-            }
+            normById[id]?.let { norms.add(it) }
         }
         return norms
     }
@@ -229,22 +246,14 @@ class DictRepository(private val context: Context) {
         val result = mutableListOf<DictEntry>()
         val seen = mutableSetOf<String>()
         db.rawQuery(
-            "SELECT word, pos, meaning, zh, en FROM dict WHERE stem = ? ORDER BY length(word), word",
+            "SELECT word, pos, zh, en FROM dict WHERE stem = ? ORDER BY length(word), word",
             arrayOf(s)
         ).use { c ->
             while (c.moveToNext()) {
                 val w = c.getString(0)
                 val n = normalize(w)
                 if (n != norm && seen.add(n)) {
-                    result.add(
-                        DictEntry(
-                            word = w,
-                            meaning = c.getString(2),
-                            pos = c.getString(1),
-                            zh = c.getString(3),
-                            en = c.getString(4)
-                        )
-                    )
+                    result.add(rowToEntry(c))
                     if (result.size >= maxResults) break
                 }
             }
@@ -263,7 +272,7 @@ class DictRepository(private val context: Context) {
         val result = mutableListOf<DictEntry>()
         val seen = mutableSetOf<String>()
         db.rawQuery(
-            "SELECT word, pos, meaning, zh, en FROM dict WHERE stem = ? ORDER BY length(word), word",
+            "SELECT word, pos, zh, en FROM dict WHERE stem = ? ORDER BY length(word), word",
             arrayOf(s)
         ).use { c ->
             while (c.moveToNext()) {
@@ -272,15 +281,7 @@ class DictRepository(private val context: Context) {
                 if (n != norm && abs(n.length - norm.length) in 1..4 &&
                     (n.startsWith(s) || w.lowercase(Locale.ROOT).startsWith(s)) && seen.add(n)
                 ) {
-                    result.add(
-                        DictEntry(
-                            word = w,
-                            meaning = c.getString(2),
-                            pos = c.getString(1),
-                            zh = c.getString(3),
-                            en = c.getString(4)
-                        )
-                    )
+                    result.add(rowToEntry(c))
                     if (result.size >= maxResults) break
                 }
             }
@@ -308,15 +309,9 @@ class DictRepository(private val context: Context) {
     }
 
     private fun getEntryById(db: SQLiteDatabase, norm: String): DictEntry? {
-        db.rawQuery("SELECT word, pos, meaning, zh, en FROM dict WHERE norm = ? LIMIT 1", arrayOf(norm)).use { c ->
+        db.rawQuery("SELECT word, pos, zh, en FROM dict WHERE norm = ? LIMIT 1", arrayOf(norm)).use { c ->
             if (c.moveToFirst()) {
-                return DictEntry(
-                    word = c.getString(0),
-                    meaning = c.getString(2),
-                    pos = c.getString(1),
-                    zh = c.getString(3),
-                    en = c.getString(4)
-                )
+                return rowToEntry(c)
             }
         }
         return null

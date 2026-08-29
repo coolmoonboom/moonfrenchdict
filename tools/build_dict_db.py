@@ -77,7 +77,6 @@ def build():
                  "word TEXT NOT NULL,"
                  "norm TEXT NOT NULL,"
                  "pos TEXT,"
-                 "meaning TEXT,"
                  "zh TEXT,"
                  "en TEXT,"
                  "stem TEXT)")
@@ -86,10 +85,6 @@ def build():
 
     conn.execute("CREATE TABLE dict_ngram (gram TEXT PRIMARY KEY, ids BLOB NOT NULL)")
     conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
-
-    def combine(zh, en, pos):
-        primary = zh if zh.strip() else en
-        return f"【{pos}】{primary}" if pos.strip() else primary
 
     rows = 0
     ngram_rows = 0
@@ -103,9 +98,9 @@ def build():
         if n in seen:
             continue
         seen.add(n)
-        dedup.append((w, n, pos, combine(zh, en, pos), zh, en, stem(w)))
+        dedup.append((w, n, pos, zh, en, stem(w)))
     conn.executemany(
-        "INSERT INTO dict (word, norm, pos, meaning, zh, en, stem) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO dict (word, norm, pos, zh, en, stem) VALUES (?,?,?,?,?,?)",
         dedup
     )
     rows = len(dedup)

@@ -62,7 +62,13 @@ android/
 
 ## 词典数据
 
-采用**预编译 SQLite 数据库**（`assets/dictionary.db`），首次启动拷贝到应用目录，后续启动直接打开、零解析。
+采用**预编译 SQLite 数据库**（`assets/dictionary.db`，约 62MB），首次启动拷贝到应用目录，后续启动直接打开、零解析。查词时释义由 `zh`/`en`/`pos` 现算组装（`DictEntry.combineMeaning`），不存储冗余拼接列。
+
+性能优化：
+
+- 模糊/近似搜索基于 **3-gram 倒排索引**（`dict_ngram`，posting 存 4 字节定长 ID）缩小候选，再按编辑距离精排
+- 启动时把全量 norm 载入内存映射（`normById`/`idByNorm`），ngram 候选直接查内存，避免逐条查库
+- 查词、AI 翻译、前缀建议均异步执行，输入带防抖取消，不阻塞 UI
 
 数据源（统一格式 `[word, pos, en, zh]`，36 万+ 词条）：
 

@@ -17,7 +17,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 判断释义是否包含中文 */
 internal fun hasChinese(s: String): Boolean = s.any { it in '\u4e00'..'\u9fff' }
@@ -37,6 +40,7 @@ fun LookupScreen(
     var similar by remember { mutableStateOf<List<DictEntry>>(emptyList()) }
     var related by remember { mutableStateOf<List<DictEntry>>(emptyList()) }
     var derived by remember { mutableStateOf<List<DictEntry>>(emptyList()) }
+    var prefixSuggestions by remember { mutableStateOf<List<DictEntry>>(emptyList()) }
     var onlineResult by remember { mutableStateOf<MyMemoryTranslator.TranslateResult?>(null) }
     var loading by remember { mutableStateOf(false) }
     var expansion by remember { mutableStateOf<String?>(null) }
@@ -45,11 +49,15 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
+    // 防抖：每次输入取消上一次未完成的搜索，避免卡顿
+    var searchJob by remember { mutableStateOf<Job?>(null) }
+
     fun doSearch(q: String) {
         query = q
         onlineResult = null
         expansion = null
         breakdown = null
+        searchJob?.cancel()
         if (q.isBlank()) {
             selected = null
             similar = emptyList()
@@ -57,25 +65,42 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
             derived = emptyList()
             return
         }
-        val exact = repository.lookupExact(q)
-        if (exact.isNotEmpty()) {
-            repository.addHistory(q, settings.historyLimit)
-            selected = exact.first()
-            similar = repository.similarWords(q)
-            related = repository.relatedWords(q)
-            derived = repository.derivedWords(q)
-            breakdown = morphology.analyze(q, repository)
-            if (conjugator.isVerb(exact.first().word)) {
-                expansion = "动词原形：${exact.first().word}"
-            }
-        } else {
-            selected = null
-            similar = repository.similarWords(q)
-            related = repository.relatedWords(q)
-            derived = repository.derivedWords(q)
-            breakdown = morphology.analyze(q, repository)
-            if (conjugator.isVerb(q)) {
-                expansion = "动词原形：$q"
+        searchJob = scope.launch {
+            // 后台线程执行全部查询，避免阻塞 UI
+            val exact = withContext(Dispatchers.IO) { repository.lookupExact(q) }
+            if (exact.isNotEmpty()) {
+                withContext(Dispatchers.IO) { repository.addHistory(q, settings.historyLimit) }
+                val first = exact.first()
+                val verb = withContext(Dispatchers.IO) { conjugator.isVerb(first.word) }
+                withContext(Dispatchers.Main) {
+                    selected = first
+                    expansion = if (verb) "动词原形：${first.word}" else null
+                }
+                // 近似词/词根词/词形分析均走后台
+                val sim = withContext(Dispatchers.IO) { repository.similarWords(q) }
+                val rel = withContext(Dispatchers.IO) { repository.relatedWords(q) }
+                val der = withContext(Dispatchers.IO) { repository.derivedWords(q) }
+                val bd = withContext(Dispatchers.IO) { morphology.analyze(q, repository) }
+                withContext(Dispatchers.Main) {
+                    similar = sim
+                    related = rel
+                    derived = der
+                    breakdown = bd
+                }
+            } else {
+                val sim = withContext(Dispatchers.IO) { repository.similarWords(q) }
+                val rel = withContext(Dispatchers.IO) { repository.relatedWords(q) }
+                val der = withContext(Dispatchers.IO) { repository.derivedWords(q) }
+                val bd = withContext(Dispatchers.IO) { morphology.analyze(q, repository) }
+                val verb = withContext(Dispatchers.IO) { conjugator.isVerb(q) }
+                withContext(Dispatchers.Main) {
+                    selected = null
+                    similar = sim
+                    related = rel
+                    derived = der
+                    breakdown = bd
+                    expansion = if (verb) "动词原形：$q" else null
+                }
             }
         }
     }
@@ -84,6 +109,16 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     LaunchedEffect(Unit) {
         favoriteWords = repository.loadFavorites().map { it.word }.toSet()
         if (query.isNotBlank()) doSearch(query)
+    }
+
+    // 无精确匹配时的前缀建议：异步加载，避免阻塞 UI
+    LaunchedEffect(query) {
+        val q = query.trim()
+        if (q.isBlank() || selected != null) {
+            prefixSuggestions = emptyList()
+            return@LaunchedEffect
+        }
+        prefixSuggestions = withContext(Dispatchers.IO) { repository.lookupPrefix(q, 10) }
     }
 
     // 响应从历史查词界面点选的单词
@@ -179,30 +214,34 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                 val config = aiPrefs.modelConfig
                                 val aiConfigured = config.apiUrl.isNotBlank() &&
                                     config.apiToken.isNotBlank() && config.modelName.isNotBlank()
-                                if (aiConfigured) {
-                                    val prompt = "请将法语单词或短语翻译为简洁准确的中文释义。" +
-                                        "仅输出中文翻译结果，不要添加解释或原文。" +
-                                        "单词：${entry.word}" +
-                                        if (entry.en.isNotBlank()) "\n英文参考释义：${entry.en}" else ""
-                                    val reply = try {
-                                        AIClient.chat(
-                                            config,
-                                            listOf(AIMessage("user", prompt))
-                                        )
-                                    } catch (_: Exception) { null }
-                                    if (reply != null && reply.isNotBlank()) {
-                                        onlineResult = MyMemoryTranslator.TranslateResult(
-                                            translatedText = reply.trim(),
-                                            source = "AI(${config.modelName})"
-                                        )
-                                    }
-                                }
-                                if (onlineResult == null) {
+                                val result = withContext(Dispatchers.IO) {
+                                    if (aiConfigured) {
+                                        val prompt = "请将法语单词或短语翻译为简洁准确的中文释义。" +
+                                            "仅输出中文翻译结果，不要添加解释或原文。" +
+                                            "单词：${entry.word}" +
+                                            if (entry.en.isNotBlank()) "\n英文参考释义：${entry.en}" else ""
+                                        val reply = try {
+                                            AIClient.chat(
+                                                config,
+                                                listOf(AIMessage("user", prompt))
+                                            )
+                                        } catch (_: Exception) { null }
+                                        if (reply != null && reply.isNotBlank()) {
+                                            MyMemoryTranslator.TranslateResult(
+                                                translatedText = reply.trim(),
+                                                source = "AI(${config.modelName})"
+                                            )
+                                        } else null
+                                    } else null
+                                } ?: withContext(Dispatchers.IO) {
                                     val en = translator.translate(entry.word, "fr|en")
                                     if (en != null) {
                                         val zh = translator.translate(en.translatedText, "en|zh-CN")
-                                        if (zh != null) onlineResult = zh
-                                    }
+                                        zh
+                                    } else null
+                                }
+                                if (onlineResult == null && result != null) {
+                                    onlineResult = result
                                 }
                             }
                         }
@@ -453,8 +492,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
 
                 // 无精确匹配时的建议列表
                 if (selected == null && query.isNotBlank() && similar.isEmpty() && related.isEmpty() && derived.isEmpty()) {
-                    val suggestions = repository.lookupPrefix(query, 10)
-                    if (suggestions.isNotEmpty()) {
+                    if (prefixSuggestions.isNotEmpty()) {
                         item {
                             Text(
                                 "建议",
@@ -464,16 +502,25 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                 fontWeight = FontWeight.Medium
                             )
                         }
-                        items(suggestions) { entry ->
+                        items(prefixSuggestions) { entry ->
                             Card(
                                 onClick = {
                                     selected = entry
                                     query = entry.word
-                                    similar = repository.similarWords(entry.word)
-                                    related = repository.relatedWords(entry.word)
-                                    derived = repository.derivedWords(entry.word)
-                                    breakdown = morphology.analyze(entry.word, repository)
                                     onlineResult = null
+                                    searchJob?.cancel()
+                                    searchJob = scope.launch {
+                                        val sim = withContext(Dispatchers.IO) { repository.similarWords(entry.word) }
+                                        val rel = withContext(Dispatchers.IO) { repository.relatedWords(entry.word) }
+                                        val der = withContext(Dispatchers.IO) { repository.derivedWords(entry.word) }
+                                        val bd = withContext(Dispatchers.IO) { morphology.analyze(entry.word, repository) }
+                                        withContext(Dispatchers.Main) {
+                                            similar = sim
+                                            related = rel
+                                            derived = der
+                                            breakdown = bd
+                                        }
+                                    }
                                 },
                                 modifier = Modifier
                                     .fillMaxWidth()
