@@ -29,7 +29,7 @@ data class DictEntry(
 /**
  * 词典仓库。
  *
- * 首次启动时把 assets 中的 JSON 词库导入本地 SQLite（databases/dictionary.db），
+ * 首次启动时把 assets 中的词库导入本地 SQLite（databases/dictionary.db），
  * 后续启动直接打开 SQLite，不再每次解析 JSON，大幅提升加载速度。
  */
 class DictRepository(private val context: Context) {
@@ -294,7 +294,7 @@ class DictRepository(private val context: Context) {
 
     companion object {
         const val DB_NAME = "dictionary.db"
-        const val DB_VERSION = 2
+        const val DB_VERSION = 3
 
         private val ACCENT_MAP = mapOf(
             'à' to 'a', 'â' to 'a', 'ä' to 'a', 'æ' to 'a',
@@ -390,29 +390,10 @@ private class DictDbHelper(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
-            importJsonDict(db, "dict_combined.json")
             importSjDict(db, "word.sj")
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
-        }
-    }
-
-    private fun importJsonDict(db: SQLiteDatabase, filename: String) {
-        try {
-            val stream = appContext.assets.open(filename)
-            val reader = BufferedReader(InputStreamReader(stream, "UTF-8"))
-            val text = reader.readText()
-            reader.close()
-            val arr = JSONArray(text)
-            for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                val word = obj.optString("word", "").trim()
-                val meaning = obj.optString("meaning", "").trim()
-                if (word.isNotEmpty()) insertIfAbsent(db, word, meaning)
-            }
-        } catch (_: Exception) {
-            // file not found, skip
         }
     }
 
