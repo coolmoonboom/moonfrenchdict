@@ -29,7 +29,8 @@ fun LookupScreen(
     translator: MyMemoryTranslator,
     conjugator: VerbConjugator,
     morphology: MorphologyAnalyzer,
-    settings: AppSettings
+    settings: AppSettings,
+    aiPrefs: AIPreferences
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selected by remember { mutableStateOf<DictEntry?>(null) }
@@ -171,14 +172,37 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                         }
                     }
 
-                    // 自动联网翻译兜底（本地无中文时）
+                    // 自动翻译兜底（本地无中文时）：优先 AI，未配置回退 MyMemory
                     item {
                         LaunchedEffect(entry.word) {
                             if (onlineResult == null && !hasChinese(entry.meaning)) {
-                                val en = translator.translate(entry.word, "fr|en")
-                                if (en != null) {
-                                    val zh = translator.translate(en.translatedText, "en|zh-CN")
-                                    if (zh != null) onlineResult = zh
+                                val config = aiPrefs.modelConfig
+                                val aiConfigured = config.apiUrl.isNotBlank() &&
+                                    config.apiToken.isNotBlank() && config.modelName.isNotBlank()
+                                if (aiConfigured) {
+                                    val prompt = "请将法语单词或短语翻译为简洁准确的中文释义。" +
+                                        "仅输出中文翻译结果，不要添加解释或原文。" +
+                                        "单词：${entry.word}" +
+                                        if (entry.en.isNotBlank()) "\n英文参考释义：${entry.en}" else ""
+                                    val reply = try {
+                                        AIClient.chat(
+                                            config,
+                                            listOf(AIMessage("user", prompt))
+                                        )
+                                    } catch (_: Exception) { null }
+                                    if (reply != null && reply.isNotBlank()) {
+                                        onlineResult = MyMemoryTranslator.TranslateResult(
+                                            translatedText = reply.trim(),
+                                            source = "AI(${config.modelName})"
+                                        )
+                                    }
+                                }
+                                if (onlineResult == null) {
+                                    val en = translator.translate(entry.word, "fr|en")
+                                    if (en != null) {
+                                        val zh = translator.translate(en.translatedText, "en|zh-CN")
+                                        if (zh != null) onlineResult = zh
+                                    }
                                 }
                             }
                         }

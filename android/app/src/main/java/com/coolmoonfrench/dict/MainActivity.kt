@@ -262,7 +262,7 @@ fun MainTabs(
                     AIScreen(prefs = aiPrefs, onOpenSettings = { showAISettings = true }, refreshKey = aiRefreshKey)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 1) 1f else 0f).zIndex(if (selected == 1) 1f else 0f)) {
-                    LookupScreen(repository, translator, conjugator, morphology, settings)
+                    LookupScreen(repository, translator, conjugator, morphology, settings, aiPrefs)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 2) 1f else 0f).zIndex(if (selected == 2) 1f else 0f)) {
                     ConjugationScreen(conjugator, repository, translator, morphology)

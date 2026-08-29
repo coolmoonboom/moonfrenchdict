@@ -14,7 +14,9 @@ import kotlin.math.abs
 data class DictEntry(
     val word: String,
     val meaning: String,
-    val pos: String = extractPos(meaning)
+    val pos: String = "",
+    val zh: String = "",
+    val en: String = ""
 ) {
     companion object {
         private val POS_PATTERN = Regex("【([^】]+)】")
@@ -22,6 +24,12 @@ data class DictEntry(
         fun extractPos(meaning: String): String {
             val m = POS_PATTERN.find(meaning)
             return m?.groupValues?.get(1)?.trim() ?: ""
+        }
+
+        /** 组装展示用释义：中文优先，英文兜底 */
+        fun combineMeaning(zh: String, en: String, pos: String): String {
+            val primary = if (zh.isNotBlank()) zh else en
+            return if (pos.isNotBlank()) "【$pos】$primary" else primary
         }
     }
 }
@@ -62,9 +70,17 @@ class DictRepository(private val context: Context) {
         if (norm.isEmpty()) return emptyList()
         val db = dbHelper.readableDatabase
         val result = mutableListOf<DictEntry>()
-        db.rawQuery("SELECT word, pos, meaning FROM dict WHERE norm = ?", arrayOf(norm)).use { c ->
+        db.rawQuery("SELECT word, pos, meaning, zh, en FROM dict WHERE norm = ?", arrayOf(norm)).use { c ->
             while (c.moveToNext()) {
-                result.add(DictEntry(c.getString(0), c.getString(2), c.getString(1)))
+                result.add(
+                    DictEntry(
+                        word = c.getString(0),
+                        meaning = c.getString(2),
+                        pos = c.getString(1),
+                        zh = c.getString(3),
+                        en = c.getString(4)
+                    )
+                )
             }
         }
         return result
@@ -77,11 +93,19 @@ class DictRepository(private val context: Context) {
         val db = dbHelper.readableDatabase
         val result = mutableListOf<DictEntry>()
         db.rawQuery(
-            "SELECT word, pos, meaning FROM dict WHERE norm LIKE ? ESCAPE '\\' ORDER BY length(norm), word LIMIT ?",
+            "SELECT word, pos, meaning, zh, en FROM dict WHERE norm LIKE ? ESCAPE '\\' ORDER BY length(norm), word LIMIT ?",
             arrayOf("$escaped%", maxResults.toString())
         ).use { c ->
             while (c.moveToNext()) {
-                result.add(DictEntry(c.getString(0), c.getString(2), c.getString(1)))
+                result.add(
+                    DictEntry(
+                        word = c.getString(0),
+                        meaning = c.getString(2),
+                        pos = c.getString(1),
+                        zh = c.getString(3),
+                        en = c.getString(4)
+                    )
+                )
             }
         }
         return result
@@ -150,14 +174,22 @@ class DictRepository(private val context: Context) {
         val result = mutableListOf<DictEntry>()
         val seen = mutableSetOf<String>()
         db.rawQuery(
-            "SELECT word, pos, meaning FROM dict WHERE stem = ? ORDER BY length(word), word",
+            "SELECT word, pos, meaning, zh, en FROM dict WHERE stem = ? ORDER BY length(word), word",
             arrayOf(s)
         ).use { c ->
             while (c.moveToNext()) {
                 val w = c.getString(0)
                 val n = normalize(w)
                 if (n != norm && seen.add(n)) {
-                    result.add(DictEntry(w, c.getString(2), c.getString(1)))
+                    result.add(
+                        DictEntry(
+                            word = w,
+                            meaning = c.getString(2),
+                            pos = c.getString(1),
+                            zh = c.getString(3),
+                            en = c.getString(4)
+                        )
+                    )
                     if (result.size >= maxResults) break
                 }
             }
@@ -176,7 +208,7 @@ class DictRepository(private val context: Context) {
         val result = mutableListOf<DictEntry>()
         val seen = mutableSetOf<String>()
         db.rawQuery(
-            "SELECT word, pos, meaning FROM dict WHERE stem = ? ORDER BY length(word), word",
+            "SELECT word, pos, meaning, zh, en FROM dict WHERE stem = ? ORDER BY length(word), word",
             arrayOf(s)
         ).use { c ->
             while (c.moveToNext()) {
@@ -185,7 +217,15 @@ class DictRepository(private val context: Context) {
                 if (n != norm && abs(n.length - norm.length) in 1..4 &&
                     (n.startsWith(s) || w.lowercase(Locale.ROOT).startsWith(s)) && seen.add(n)
                 ) {
-                    result.add(DictEntry(w, c.getString(2), c.getString(1)))
+                    result.add(
+                        DictEntry(
+                            word = w,
+                            meaning = c.getString(2),
+                            pos = c.getString(1),
+                            zh = c.getString(3),
+                            en = c.getString(4)
+                        )
+                    )
                     if (result.size >= maxResults) break
                 }
             }
@@ -213,9 +253,15 @@ class DictRepository(private val context: Context) {
     }
 
     private fun getEntryById(db: SQLiteDatabase, norm: String): DictEntry? {
-        db.rawQuery("SELECT word, pos, meaning FROM dict WHERE norm = ? LIMIT 1", arrayOf(norm)).use { c ->
+        db.rawQuery("SELECT word, pos, meaning, zh, en FROM dict WHERE norm = ? LIMIT 1", arrayOf(norm)).use { c ->
             if (c.moveToFirst()) {
-                return DictEntry(c.getString(0), c.getString(2), c.getString(1))
+                return DictEntry(
+                    word = c.getString(0),
+                    meaning = c.getString(2),
+                    pos = c.getString(1),
+                    zh = c.getString(3),
+                    en = c.getString(4)
+                )
             }
         }
         return null
@@ -294,7 +340,7 @@ class DictRepository(private val context: Context) {
 
     companion object {
         const val DB_NAME = "dictionary.db"
-        const val DB_VERSION = 3
+        const val DB_VERSION = 4
 
         private val ACCENT_MAP = mapOf(
             'à' to 'a', 'â' to 'a', 'ä' to 'a', 'æ' to 'a',
@@ -374,6 +420,8 @@ private class DictDbHelper(context: Context) :
                 "norm TEXT NOT NULL, " +
                 "pos TEXT, " +
                 "meaning TEXT, " +
+                "zh TEXT, " +
+                "en TEXT, " +
                 "stem TEXT)"
         )
         db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_dict_norm ON dict(norm)")
@@ -408,10 +456,10 @@ private class DictDbHelper(context: Context) :
                 val item = arr.getJSONArray(i)
                 val word = item.optString(0, "").trim()
                 val pos = item.optString(1, "").trim()
-                val chinese = item.optString(2, "").trim()
+                val en = item.optString(2, "").trim()
+                val zh = item.optString(3, "").trim()
                 if (word.isNotEmpty()) {
-                    val meaning = if (pos.isNotEmpty()) "【$pos】$chinese" else chinese
-                    insertIfAbsent(db, word, meaning)
+                    insertIfAbsent(db, word, pos, en, zh)
                 }
             }
         } catch (_: Exception) {
@@ -419,15 +467,17 @@ private class DictDbHelper(context: Context) :
         }
     }
 
-    private fun insertIfAbsent(db: SQLiteDatabase, word: String, meaning: String) {
+    private fun insertIfAbsent(db: SQLiteDatabase, word: String, pos: String, en: String, zh: String) {
         val norm = DictRepository.normalize(word)
         if (norm.isEmpty()) return
         val stem = DictRepository.stem(word)
         val cv = android.content.ContentValues().apply {
             put("word", word)
             put("norm", norm)
-            put("pos", DictEntry.extractPos(meaning))
-            put("meaning", meaning)
+            put("pos", pos)
+            put("zh", zh)
+            put("en", en)
+            put("meaning", DictEntry.combineMeaning(zh, en, pos))
             put("stem", stem)
         }
         db.insertWithOnConflict("dict", null, cv, SQLiteDatabase.CONFLICT_IGNORE)
