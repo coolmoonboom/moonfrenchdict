@@ -238,7 +238,7 @@ fun AIFavoriteDetailScreen(
                     }
                     Spacer(Modifier.height(6.dp))
                     Markdown(
-                        content = favorite!!.content,
+                        content = MarkdownSanitizer.sanitize(favorite!!.content),
                         imageTransformer = Coil3ImageTransformerImpl
                     )
                     Spacer(Modifier.height(12.dp))

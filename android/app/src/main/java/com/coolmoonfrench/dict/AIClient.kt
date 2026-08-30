@@ -20,6 +20,14 @@ object AIClient {
 
     private val jsonMedia = "application/json; charset=utf-8".toMediaType()
 
+    private val systemPrompt = buildString {
+        append("你是一个法语学习助手，帮助用户查词、解答语法、翻译。涉及法语时给出法语原词并附中文。\n")
+        append("回答请使用规范的 Markdown 格式。输出表格时必须符合标准 GFM 表格语法：\n")
+        append("第一行写表头（用 | 分隔各列），第二行必须写分隔行（列数与表头一致，如 |---|----|），\n")
+        append("之后每行写一条数据且单元格数量与表头一致，表格前后各留一个空行，表格前不要附加其他文本。\n")
+        append("引用内容使用 > 前缀并单独成行，行首必须顶格写 > 且前后留空行。")
+    }
+
     /** 拉取 OpenAI 兼容模型列表 */
     suspend fun listModels(config: AIModelConfig): List<String> = withContext(Dispatchers.IO) {
         val base = config.apiUrl.trim().trimEnd('/')
@@ -55,6 +63,7 @@ object AIClient {
             AIInterfaceType.ANTHROPIC -> {
                 url = base.substringBeforeLast("/messages").trimEnd('/') + "/messages"
                 val arr = JSONArray()
+                arr.put(JSONObject().put("role", "system").put("content", systemPrompt))
                 if (!webContext.isNullOrBlank()) {
                     arr.put(JSONObject().put("role", "user").put("content", buildWebContextPrompt(webContext)))
                 }
@@ -70,6 +79,7 @@ object AIClient {
             AIInterfaceType.OPENAI_RESPONSES -> {
                 url = base.substringBeforeLast("/responses").trimEnd('/') + "/responses"
                 val input = JSONArray()
+                input.put(JSONObject().put("role", "system").put("content", systemPrompt))
                 if (!webContext.isNullOrBlank()) {
                     input.put(JSONObject().put("role", "system").put("content", buildWebContextPrompt(webContext)))
                 }
@@ -84,7 +94,7 @@ object AIClient {
             else -> { // openai_chat
                 url = base.substringBeforeLast("/chat/completions").trimEnd('/') + "/chat/completions"
                 val arr = JSONArray()
-                arr.put(JSONObject().put("role", "system").put("content", "你是一个法语学习助手，帮助用户查词、解答语法、翻译。涉及法语时给出法语原词并附中文。"))
+                arr.put(JSONObject().put("role", "system").put("content", systemPrompt))
                 if (!webContext.isNullOrBlank()) {
                     arr.put(JSONObject().put("role", "system").put("content", buildWebContextPrompt(webContext)))
                 }

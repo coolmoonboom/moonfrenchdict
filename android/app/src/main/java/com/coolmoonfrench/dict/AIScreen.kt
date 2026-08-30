@@ -673,7 +673,7 @@ private fun AIBubble(
                 } else {
                     SelectionContainer {
                         Markdown(
-                            content = message.content,
+                            content = MarkdownSanitizer.sanitize(message.content),
                             imageTransformer = Coil3ImageTransformerImpl,
                             modifier = Modifier.fillMaxWidth()
                         )

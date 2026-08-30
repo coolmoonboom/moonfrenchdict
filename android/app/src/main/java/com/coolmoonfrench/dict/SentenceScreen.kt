@@ -119,6 +119,10 @@ fun SentenceScreen(
 
     /** AI 逐词解释：复用首页 AI（模型配置来自 AIPreferences） */
     fun doAIAnalyze(s: String) {
+        if (s.isBlank()) {
+            aiError = "请先输入要解释的法语句子"
+            return
+        }
         val prefs = aiPrefs ?: return
         val config = prefs.modelConfig
         if (config.apiUrl.isBlank() || config.apiToken.isBlank() || config.modelName.isBlank()) {
@@ -197,7 +201,7 @@ fun SentenceScreen(
         }
 
         val result = analysis
-        if (result == null) return@Column
+        if (result == null && aiWords == null && aiError == null && !aiLoading) return@Column
 
         SelectionContainer {
             LazyColumn(
@@ -290,24 +294,28 @@ fun SentenceScreen(
             }
 
             // 词性统计
-            item {
-                val counts = result.groupBy { it.pos }
-                    .mapValues { it.value.size }
-                    .filter { it.value > 0 }
-                    .entries
-                    .sortedByDescending { it.value }
-                    .joinToString(" ") { "${it.key}${it.value}" }
-                Text(
-                    "共${result.size}个词 ${if (counts.isNotEmpty()) "· $counts" else ""}",
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp
-                )
+            if (result != null) {
+                item {
+                    val counts = result.groupBy { it.pos }
+                        .mapValues { it.value.size }
+                        .filter { it.value > 0 }
+                        .entries
+                        .sortedByDescending { it.value }
+                        .joinToString(" ") { "${it.key}${it.value}" }
+                    Text(
+                        "共${result.size}个词 ${if (counts.isNotEmpty()) "· $counts" else ""}",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
             }
 
             // 逐词分析卡片
-            items(result) { wa ->
-                WordCard(wa, repository, conjugator, context)
+            if (result != null) {
+                items(result) { wa ->
+                    WordCard(wa, repository, conjugator, context)
+                }
             }
             }
         }
