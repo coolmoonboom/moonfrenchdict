@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -93,8 +94,14 @@ fun SentenceScreen(
     var aiWords by remember { mutableStateOf<List<AIWordMeaning>?>(null) }
     var aiLoading by remember { mutableStateOf(false) }
     var aiError by remember { mutableStateOf<String?>(null) }
+    var ttsReady by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // 初始化 eSpeak-NG 法语 TTS
+    LaunchedEffect(Unit) {
+        ttsReady = Espeak.initialize(context)
+    }
 
     fun doAnalyze(s: String) {
         sentence = s
@@ -184,6 +191,18 @@ fun SentenceScreen(
                 enabled = !aiLoading
             ) {
                 Text(if (aiLoading) "AI 分析中…" else "AI 逐词解释")
+            }
+            if (ttsReady && sentence.isNotBlank()) {
+                IconButton(
+                    onClick = { Espeak.speak(sentence) },
+                    modifier = Modifier.size(44.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "朗读整句",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
             OutlinedButton(
                 onClick = { doAnalyze("J'ai mangé une pomme dans la cuisine") },
@@ -289,7 +308,7 @@ fun SentenceScreen(
                     }
                 }
                 items(aiWords!!) { aw ->
-                    AIWordCard(aw)
+                    AIWordCard(aw, ttsReady)
                 }
             }
 
@@ -314,7 +333,7 @@ fun SentenceScreen(
             // 逐词分析卡片
             if (result != null) {
                 items(result) { wa ->
-                    WordCard(wa, repository, conjugator, context)
+                    WordCard(wa, repository, conjugator, context, ttsReady)
                 }
             }
             }
@@ -323,7 +342,7 @@ fun SentenceScreen(
 }
 
 @Composable
-private fun AIWordCard(aw: AIWordMeaning) {
+private fun AIWordCard(aw: AIWordMeaning, ttsReady: Boolean) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -332,6 +351,19 @@ private fun AIWordCard(aw: AIWordMeaning) {
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (ttsReady) {
+                    IconButton(
+                        onClick = { Espeak.speak(aw.word) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "朗读 ${aw.word}",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
                 Text(aw.word, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 Spacer(Modifier.width(6.dp))
                 if (aw.pos.isNotEmpty()) {
@@ -366,7 +398,8 @@ private fun WordCard(
     wa: WordAnalysis,
     repository: DictRepository,
     conjugator: VerbConjugator,
-    context: Context
+    context: Context,
+    ttsReady: Boolean
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -379,6 +412,19 @@ private fun WordCard(
         Column(modifier = Modifier.padding(12.dp)) {
             // 第一行：词形 + 词性 + 成分
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (ttsReady) {
+                    IconButton(
+                        onClick = { Espeak.speak(wa.surface) },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "朗读 ${wa.surface}",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
                 Text(
                     wa.surface,
                     fontWeight = FontWeight.Bold,

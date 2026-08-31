@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -46,8 +48,14 @@ fun LookupScreen(
     var expansion by remember { mutableStateOf<String?>(null) }
 var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     var favoriteWords by remember { mutableStateOf(emptySet<String>()) }
+    var ttsReady by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // 初始化 eSpeak-NG 法语 TTS
+    LaunchedEffect(Unit) {
+        ttsReady = Espeak.initialize(context)
+    }
 
     // 防抖：每次输入取消上一次未完成的搜索，避免卡顿
     var searchJob by remember { mutableStateOf<Job?>(null) }
@@ -164,6 +172,17 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (ttsReady) {
+                                        IconButton(
+                                            onClick = { Espeak.speak(entry.word) }
+                                        ) {
+                                            Icon(
+                                                Icons.AutoMirrored.Filled.VolumeUp,
+                                                contentDescription = "朗读",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        }
+                                    }
                                     Text(
                                         text = entry.word,
                                         fontSize = 28.sp,
