@@ -10,9 +10,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * eSpeak-NG 法语 TTS 封装。
- * - 原生库：libespeak-ng + libttsbridge（JNI 桥）
- * - 语音数据：assets/espeak-ng-data，首次运行时解压到 filesDir
+ * 法语 TTS 封装（Mimic 引擎 + siwis HTS 语音）。
+ * - 原生库：libttsmimiccore + libHTSEngine + libpcre2-8 + libttsmimic_french
+ *   + libttsmimic_siwis_fr_zoe_hts + libmimicbridge（JNI 桥）
+ * - 语音数据：assets/voices/siwis_fr_zoe_hts.htsvoice，首次运行时解压到 filesDir/voices
  */
 object Espeak {
 
@@ -22,7 +23,7 @@ object Espeak {
     private var initialized = false
 
     @Volatile
-    private var sampleRate = 22050
+    private var sampleRate = 44100
 
     @Volatile
     private var playing = false
@@ -34,8 +35,12 @@ object Espeak {
 
     /** 加载原生库（必须在 speak 前调用） */
     private fun load() {
-        System.loadLibrary("espeak-ng")
-        System.loadLibrary("ttsbridge")
+        System.loadLibrary("ttsmimiccore")
+        System.loadLibrary("HTSEngine")
+        System.loadLibrary("pcre2-8")
+        System.loadLibrary("ttsmimic_french")
+        System.loadLibrary("ttsmimic_siwis_fr_zoe_hts")
+        System.loadLibrary("mimicbridge")
     }
 
     /**
@@ -46,16 +51,15 @@ object Espeak {
         if (initialized) return@withContext true
         try {
             load()
-            val dataDir = File(context.filesDir, "espeak-ng-data")
-            if (!dataDir.exists() || !File(dataDir, "phondata").exists()) {
-                dataDir.deleteRecursively()
-                dataDir.mkdirs()
-                copyAssetsRecursive(context, "espeak-ng-data", dataDir)
+            val voicesDir = File(context.filesDir, "voices")
+            if (!voicesDir.exists() || !File(voicesDir, "siwis_fr_zoe_hts.htsvoice").exists()) {
+                voicesDir.deleteRecursively()
+                voicesDir.mkdirs()
+                copyAssetsRecursive(context, "voices", voicesDir)
             }
-            // espeak_Initialize 的 path 应为包含 espeak-ng-data 的父目录
             val sr = nativeInit(context.filesDir.absolutePath)
             if (sr <= 0) {
-                lastError = "eSpeak 初始化失败(nativeInit=$sr)"
+                lastError = "Mimic 初始化失败(nativeInit=$sr)"
                 return@withContext false
             }
             sampleRate = sr
@@ -92,7 +96,8 @@ object Espeak {
 
     /**
      * 合成并播放法语文本。
-     * 返回 true 表示播放已开始（或已在播放）；false 表示未初始化或播放失败。
+     * 返回 true 表示播放已开始；false 表示未初始化。
+     * 合成与播放均在后台线程执行，不阻塞调用线程。
      */
     fun speak(text: String, rate: Int = 150): Boolean {
         if (!initialized) {
@@ -102,7 +107,25 @@ object Espeak {
         if (playing) {
             return true
         }
-        return playPcmInternal(text, "fr", rate)
+        playing = true
+        val t = Thread {
+            try {
+                val bytes = nativeSpeak(text, "fr", rate)
+                if (bytes == null || bytes.isEmpty()) {
+                    lastError = "语音合成失败(无 PCM)"
+                    return@Thread
+                }
+                playBytes(bytes)
+            } catch (e: Throwable) {
+                lastError = "播放失败: ${e.message}"
+                Log.e(TAG, "speak failed", e)
+            } finally {
+                playing = false
+            }
+        }
+        t.isDaemon = true
+        t.start()
+        return true
     }
 
     /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]） */
@@ -129,26 +152,6 @@ object Espeak {
 
     /** 停止播放 */
     fun stop() { playing = false }
-
-    private fun playPcmInternal(text: String, voice: String, rate: Int): Boolean {
-        if (!initialized) {
-            lastError = "语音引擎未初始化"
-            return false
-        }
-        val bytes = nativeSpeak(text, voice, rate)
-        if (bytes == null || bytes.isEmpty()) {
-            lastError = "语音合成失败(无 PCM)"
-            return false
-        }
-        return try {
-            playBytes(bytes)
-            true
-        } catch (e: Throwable) {
-            lastError = "播放失败: ${e.message}"
-            Log.e(TAG, "play failed", e)
-            false
-        }
-    }
 
     private fun playBytes(bytes: ByteArray) {
         val minBuf = AudioTrack.getMinBufferSize(
