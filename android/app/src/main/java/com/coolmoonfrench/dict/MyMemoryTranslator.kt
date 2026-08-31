@@ -1,5 +1,6 @@
 package com.coolmoonfrench.dict
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -51,6 +52,8 @@ class MyMemoryTranslator {
             if (text.isNotEmpty()) {
                 return@withContext TranslateResult(text)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.e(TAG, "MyMemory failed: ${e.message}")
         }

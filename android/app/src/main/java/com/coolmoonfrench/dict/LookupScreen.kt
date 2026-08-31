@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -45,6 +46,7 @@ fun LookupScreen(
     var prefixSuggestions by remember { mutableStateOf<List<DictEntry>>(emptyList()) }
     var onlineResult by remember { mutableStateOf<MyMemoryTranslator.TranslateResult?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var translateError by remember { mutableStateOf<String?>(null) }
     var expansion by remember { mutableStateOf<String?>(null) }
 var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     var favoriteWords by remember { mutableStateOf(emptySet<String>()) }
@@ -65,6 +67,8 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
         onlineResult = null
         expansion = null
         breakdown = null
+        loading = false
+        translateError = null
         searchJob?.cancel()
         if (q.isBlank()) {
             selected = null
@@ -174,7 +178,15 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (ttsReady) {
                                         IconButton(
-                                            onClick = { Espeak.speak(entry.word) }
+                                            onClick = {
+                                                if (!Espeak.speak(entry.word)) {
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        "朗读失败：${Espeak.lastError() ?: "未知错误"}",
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
+                                            }
                                         ) {
                                             Icon(
                                                 Icons.AutoMirrored.Filled.VolumeUp,
@@ -303,6 +315,16 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                 Text("翻译中…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                             }
                         }
+                    } else if (translateError != null) {
+                        item {
+                            Box(Modifier.fillMaxWidth().padding(8.dp), contentAlignment = Alignment.Center) {
+                                Text(
+                                    translateError!!,
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
                     }
 
                     // 词根拆解
@@ -359,12 +381,23 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                         Button(
                             onClick = {
                                 loading = true
+                                translateError = null
                                 scope.launch {
-                                    val en = translator.translate(entry.word, "fr|en")
-                                    if (en != null) {
-                                        onlineResult = translator.translate(en.translatedText, "en|zh-CN")
+                                    try {
+                                        val en = translator.translate(entry.word, "fr|en")
+                                        if (en != null) {
+                                            onlineResult = translator.translate(en.translatedText, "en|zh-CN")
+                                        }
+                                        if (onlineResult == null) {
+                                            translateError = "联网释义失败，请检查网络后重试"
+                                        }
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        translateError = "联网释义失败：${e.message ?: "未知错误"}"
+                                    } finally {
+                                        loading = false
                                     }
-                                    loading = false
                                 }
                             },
                             modifier = Modifier
@@ -573,14 +606,33 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                     Spacer(Modifier.height(8.dp))
                                     LaunchedEffect(query) {
                                         loading = true
-                                        val en = translator.translate(query, "fr|en")
-                                        if (en != null) {
-                                            onlineResult = translator.translate(en.translatedText, "en|zh-CN")
+                                        translateError = null
+                                        try {
+                                            val en = translator.translate(query, "fr|en")
+                                            if (en != null) {
+                                                onlineResult = translator.translate(en.translatedText, "en|zh-CN")
+                                            }
+                                            if (onlineResult == null) {
+                                                translateError = "联网释义失败，请检查网络后重试"
+                                            }
+                                        } catch (e: CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            translateError = "联网释义失败：${e.message ?: "未知错误"}"
+                                        } finally {
+                                            loading = false
                                         }
-                                        loading = false
                                     }
                                     if (loading) {
                                         Text("翻译中…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    if (translateError != null) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            translateError!!,
+                                            color = MaterialTheme.colorScheme.error,
+                                            fontSize = 13.sp
+                                        )
                                     }
                                     if (onlineResult != null) {
                                         Spacer(Modifier.height(8.dp))
@@ -603,12 +655,23 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                         Spacer(Modifier.height(12.dp))
                                         Button(onClick = {
                                             loading = true
+                                            translateError = null
                                             scope.launch {
-                                                val en = translator.translate(query, "fr|en")
-                                                if (en != null) {
-                                                    onlineResult = translator.translate(en.translatedText, "en|zh-CN")
+                                                try {
+                                                    val en = translator.translate(query, "fr|en")
+                                                    if (en != null) {
+                                                        onlineResult = translator.translate(en.translatedText, "en|zh-CN")
+                                                    }
+                                                    if (onlineResult == null) {
+                                                        translateError = "联网释义失败，请检查网络后重试"
+                                                    }
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    translateError = "联网释义失败：${e.message ?: "未知错误"}"
+                                                } finally {
+                                                    loading = false
                                                 }
-                                                loading = false
                                             }
                                         }) {
                                             Text("重新翻译")

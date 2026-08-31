@@ -17,6 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 private val TENSE_LABELS = listOf(
@@ -55,6 +56,7 @@ fun ConjugationScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var selectedTab by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(false) }
+    var onlineError by remember { mutableStateOf<String?>(null) }
     var foundInfinitive by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -62,6 +64,8 @@ fun ConjugationScreen(
     fun doSearch(q: String) {
         query = q
         onlineMeaning = null
+        loading = false
+        onlineError = null
         if (q.isBlank()) {
             conj = null; passive = null; pronominalConj = null
             breakdown = null; meaning = ""; error = null; foundInfinitive = null
@@ -133,9 +137,20 @@ fun ConjugationScreen(
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = {
                         loading = true
+                        onlineError = null
                         scope.launch {
-                            onlineMeaning = translator.translate(query)?.translatedText
-                            loading = false
+                            try {
+                                onlineMeaning = translator.translate(query)?.translatedText
+                                if (onlineMeaning == null) {
+                                    onlineError = "联网查词失败，请检查网络后重试"
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                onlineError = "联网查词失败：${e.message?.take(120) ?: "未知错误"}"
+                            } finally {
+                                loading = false
+                            }
                         }
                     }) {
                         Text(if (loading) "翻译中…" else "联网查词")
@@ -143,6 +158,14 @@ fun ConjugationScreen(
                     onlineMeaning?.let {
                         Spacer(Modifier.height(8.dp))
                         Text(it)
+                    }
+                    if (onlineError != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            onlineError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 13.sp
+                        )
                     }
                 }
             }

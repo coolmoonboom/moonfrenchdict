@@ -21,6 +21,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -90,6 +91,7 @@ fun SentenceScreen(
     var sentenceTranslation by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     var analyzing by remember { mutableStateOf(false) }
+    var analyzeError by remember { mutableStateOf<String?>(null) }
     var favorited by remember { mutableStateOf(false) }
     var aiWords by remember { mutableStateOf<List<AIWordMeaning>?>(null) }
     var aiLoading by remember { mutableStateOf(false) }
@@ -110,17 +112,30 @@ fun SentenceScreen(
             sentenceTranslation = null
             aiWords = null
             aiError = null
+            analyzeError = null
+            analyzing = false
             return
         }
         aiWords = null
         aiError = null
+        analyzeError = null
         analyzing = true
         scope.launch {
-            val result = analyzer.analyze(s)
-            analysis = result
-            val trans = translator.translate(s)
-            sentenceTranslation = trans?.translatedText
-            analyzing = false
+            try {
+                val result = analyzer.analyze(s)
+                analysis = result
+                val trans = translator.translate(s)
+                sentenceTranslation = trans?.translatedText
+                if (trans == null) {
+                    analyzeError = "整句翻译失败，请检查网络后重试"
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                analyzeError = "分析失败：${e.message?.take(120) ?: "未知错误"}"
+            } finally {
+                analyzing = false
+            }
         }
     }
 
@@ -147,6 +162,8 @@ fun SentenceScreen(
                 if (aiWords.isNullOrEmpty()) {
                     aiError = "AI 未返回有效的逐词结果"
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 aiError = "AI 分析失败：${e.message?.take(120) ?: "未知错误"}"
             } finally {
@@ -194,7 +211,15 @@ fun SentenceScreen(
             }
             if (ttsReady && sentence.isNotBlank()) {
                 IconButton(
-                    onClick = { Espeak.speak(sentence) },
+                    onClick = {
+                        if (!Espeak.speak(sentence)) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
                     modifier = Modifier.size(44.dp)
                 ) {
                     Icon(
@@ -220,13 +245,24 @@ fun SentenceScreen(
         }
 
         val result = analysis
-        if (result == null && aiWords == null && aiError == null && !aiLoading) return@Column
+        if (result == null && aiWords == null && aiError == null && analyzeError == null && !aiLoading) return@Column
 
         SelectionContainer {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp)
             ) {
+            // 分析错误提示
+            if (analyzeError != null) {
+                item {
+                    Text(
+                        analyzeError!!,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp
+                    )
+                }
+            }
             // 整句翻译
             item {
                 if (sentenceTranslation != null) {
@@ -343,6 +379,7 @@ fun SentenceScreen(
 
 @Composable
 private fun AIWordCard(aw: AIWordMeaning, ttsReady: Boolean) {
+    val cardContext = LocalContext.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -353,7 +390,15 @@ private fun AIWordCard(aw: AIWordMeaning, ttsReady: Boolean) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (ttsReady) {
                     IconButton(
-                        onClick = { Espeak.speak(aw.word) },
+                        onClick = {
+                            if (!Espeak.speak(aw.word)) {
+                                android.widget.Toast.makeText(
+                                    cardContext,
+                                    "朗读失败：${Espeak.lastError() ?: "未知错误"}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
@@ -414,7 +459,15 @@ private fun WordCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (ttsReady) {
                     IconButton(
-                        onClick = { Espeak.speak(wa.surface) },
+                        onClick = {
+                            if (!Espeak.speak(wa.surface)) {
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "朗读失败：${Espeak.lastError() ?: "未知错误"}",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        },
                         modifier = Modifier.size(32.dp)
                     ) {
                         Icon(

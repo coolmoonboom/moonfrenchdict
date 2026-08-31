@@ -11,8 +11,8 @@ android {
         applicationId = "com.coolmoonfrench.dict"
         minSdk = 24
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.0.7"
+        versionCode = 6
+        versionName = "1.0.8"
     }
 
     compileOptions {
