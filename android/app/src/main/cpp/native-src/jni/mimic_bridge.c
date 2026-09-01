@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <android/log.h>
+#include <pthread.h>
 
 #include <mimic.h>
 #include <cst_wave.h>
@@ -18,6 +19,9 @@
 static cst_voice *g_voice = NULL;
 static int g_sample_rate = 44100;
 static int g_initialized = 0;
+
+/* 保护 g_voice 的合成调用：mimic_text_to_wave 非线程安全 */
+static pthread_mutex_t g_tts_lock = PTHREAD_MUTEX_INITIALIZER;
 
 extern void fr_plugin_init(void);
 
@@ -46,7 +50,7 @@ Java_com_coolmoonfrench_dict_Espeak_nativeInit(
 
     int rc = mimic_core_init();
     if (rc != 0) {
-        LOGE("mimic_core_init failed: %d", rc);
+        LOGE("nativeInit: mimic_core_init failed: %d", rc);
         free(voice_path);
         (*env)->ReleaseStringUTFChars(env, dataDir, dir);
         return -1;
@@ -58,10 +62,10 @@ Java_com_coolmoonfrench_dict_Espeak_nativeInit(
 
     cst_voice *vox = mimic_voice_select("zoe_hts");
     if (vox == NULL) {
-        LOGE("mimic_voice_select(zoe_hts) failed");
+        LOGE("nativeInit: mimic_voice_select(zoe_hts) failed");
         free(voice_path);
         (*env)->ReleaseStringUTFChars(env, dataDir, dir);
-        return -1;
+        return -2;
     }
 
     /* 覆盖 htsvoice 文件为绝对路径 */
@@ -97,7 +101,9 @@ Java_com_coolmoonfrench_dict_Espeak_nativeSpeak(
         return NULL;
     }
 
+    pthread_mutex_lock(&g_tts_lock);
     cst_wave *w = mimic_text_to_wave(utf8, g_voice);
+    pthread_mutex_unlock(&g_tts_lock);
     (*env)->ReleaseStringUTFChars(env, text, utf8);
     if (w == NULL) {
         LOGE("mimic_text_to_wave returned NULL for text");

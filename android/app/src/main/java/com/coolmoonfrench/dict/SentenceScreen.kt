@@ -22,6 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -100,9 +101,14 @@ fun SentenceScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // 初始化 eSpeak-NG 法语 TTS
+    // 初始化 Mimic 法语 TTS（幂等，非阻塞）；轮询等待就绪
     LaunchedEffect(Unit) {
-        ttsReady = Espeak.initialize(context)
+        Espeak.ensureInitialized(context)
+        while (true) {
+            ttsReady = Espeak.isReady()
+            if (ttsReady) break
+            delay(250)
+        }
     }
 
     fun doAnalyze(s: String) {
@@ -209,10 +215,17 @@ fun SentenceScreen(
             ) {
                 Text(if (aiLoading) "AI 分析中…" else "AI 逐词解释")
             }
-            if (ttsReady && sentence.isNotBlank()) {
+            if (sentence.isNotBlank()) {
                 IconButton(
                     onClick = {
-                        if (!Espeak.speak(sentence)) {
+                        if (!ttsReady) {
+                            Espeak.ensureInitialized(context)
+                            android.widget.Toast.makeText(
+                                context,
+                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else if (!Espeak.speak(sentence)) {
                             android.widget.Toast.makeText(
                                 context,
                                 "朗读失败：${Espeak.lastError() ?: "未知错误"}",
@@ -388,26 +401,31 @@ private fun AIWordCard(aw: AIWordMeaning, ttsReady: Boolean) {
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (ttsReady) {
-                    IconButton(
-                        onClick = {
-                            if (!Espeak.speak(aw.word)) {
-                                android.widget.Toast.makeText(
-                                    cardContext,
-                                    "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "朗读 ${aw.word}",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = {
+                        if (!ttsReady) {
+                            Espeak.ensureInitialized(cardContext)
+                            android.widget.Toast.makeText(
+                                cardContext,
+                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else if (!Espeak.speak(aw.word)) {
+                            android.widget.Toast.makeText(
+                                cardContext,
+                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "朗读 ${aw.word}",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
                 Text(aw.word, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 Spacer(Modifier.width(6.dp))
@@ -457,26 +475,31 @@ private fun WordCard(
         Column(modifier = Modifier.padding(12.dp)) {
             // 第一行：词形 + 词性 + 成分
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (ttsReady) {
-                    IconButton(
-                        onClick = {
-                            if (!Espeak.speak(wa.surface)) {
-                                android.widget.Toast.makeText(
-                                    context,
-                                    "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "朗读 ${wa.surface}",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                IconButton(
+                    onClick = {
+                        if (!ttsReady) {
+                            Espeak.ensureInitialized(context)
+                            android.widget.Toast.makeText(
+                                context,
+                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        } else if (!Espeak.speak(wa.surface)) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "朗读 ${wa.surface}",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
                 Text(
                     wa.surface,

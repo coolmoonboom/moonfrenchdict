@@ -14,13 +14,17 @@ import java.io.File
  * - 原生库：libttsmimiccore + libHTSEngine + libpcre2-8 + libttsmimic_french
  *   + libttsmimic_siwis_fr_zoe_hts + libmimicbridge（JNI 桥）
  * - 语音数据：assets/voices/siwis_fr_zoe_hts.htsvoice，首次运行时解压到 filesDir/voices
+ * - 初始化状态机：NOT_READY -> INITIALIZING -> READY | FAILED，失败后可重试，
+ *   失败原因通过 [lastError] 暴露，UI 可直接展示。
  */
 object Espeak {
 
     private const val TAG = "Espeak"
 
+    enum class State { NOT_READY, INITIALIZING, READY, FAILED }
+
     @Volatile
-    private var initialized = false
+    private var state = State.NOT_READY
 
     @Volatile
     private var sampleRate = 44100
@@ -28,7 +32,12 @@ object Espeak {
     @Volatile
     private var playing = false
 
+    @Volatile
     private var lastError: String? = null
+
+    fun state(): State = state
+
+    fun isReady(): Boolean = state == State.READY
 
     /** 最近一次错误信息（null 表示无错误），供 UI 展示诊断信息 */
     fun lastError(): String? = lastError
@@ -44,34 +53,49 @@ object Espeak {
     }
 
     /**
-     * 初始化：解压语音数据并调用 nativeInit。幂等。
-     * 返回 true 表示成功。
+     * 启动初始化（幂等，非阻塞）。READY/INITIALIZING 时直接返回。
+     * 初始化在后台线程执行，完成后 [state] 变为 READY 或 FAILED，
+     * 失败后再次调用本方法会重新初始化。
      */
-    suspend fun initialize(context: Context): Boolean = withContext(Dispatchers.IO) {
-        if (initialized) return@withContext true
-        try {
-            load()
-            val voicesDir = File(context.filesDir, "voices")
-            if (!voicesDir.exists() || !File(voicesDir, "siwis_fr_zoe_hts.htsvoice").exists()) {
-                voicesDir.deleteRecursively()
-                voicesDir.mkdirs()
-                copyAssetsRecursive(context, "voices", voicesDir)
-            }
-            val sr = nativeInit(context.filesDir.absolutePath)
-            if (sr <= 0) {
-                lastError = "Mimic 初始化失败(nativeInit=$sr)"
-                return@withContext false
-            }
-            sampleRate = sr
-            initialized = true
+    fun ensureInitialized(context: Context) {
+        if (state == State.READY || state == State.INITIALIZING) return
+        synchronized(this) {
+            if (state == State.READY || state == State.INITIALIZING) return
+            state = State.INITIALIZING
             lastError = null
-            true
-        } catch (e: Throwable) {
-            initialized = false
-            lastError = "初始化异常: ${e.message}"
-            Log.e(TAG, "initialize failed", e)
-            false
         }
+        val app = context.applicationContext
+        Thread {
+            try {
+                val ok = doInit(app)
+                synchronized(this) {
+                    state = if (ok) State.READY else State.FAILED
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "initialize failed", e)
+                synchronized(this) {
+                    state = State.FAILED
+                    lastError = "初始化异常: ${e.message}"
+                }
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun doInit(context: Context): Boolean {
+        load()
+        val voicesDir = File(context.filesDir, "voices")
+        if (!voicesDir.exists() || !File(voicesDir, "siwis_fr_zoe_hts.htsvoice").exists()) {
+            voicesDir.deleteRecursively()
+            voicesDir.mkdirs()
+            copyAssetsRecursive(context, "voices", voicesDir)
+        }
+        val sr = nativeInit(context.filesDir.absolutePath)
+        if (sr <= 0) {
+            lastError = "语音引擎初始化失败(nativeInit=$sr)"
+            return false
+        }
+        sampleRate = sr
+        return true
     }
 
     private fun copyAssetsRecursive(context: Context, assetPath: String, targetDir: File) {
@@ -82,7 +106,7 @@ object Espeak {
             val out = File(targetDir, child)
             if (out.exists()) continue
             // assets.list() 对目录返回子项数组，对文件返回 null。
-            if (assetManager.list(p)?.isEmpty() == false) {
+            if (assetManager.list(p)?.isNotEmpty() == true) {
                 out.mkdirs()
                 copyAssetsRecursive(context, p, out)
             } else {
@@ -96,21 +120,24 @@ object Espeak {
 
     /**
      * 合成并播放法语文本。
-     * 返回 true 表示播放已开始；false 表示未初始化。
+     * 返回 true 表示播放已开始；false 表示引擎未就绪或播放失败。
      * 合成与播放均在后台线程执行，不阻塞调用线程。
      */
-    fun speak(text: String, rate: Int = 150): Boolean {
-        if (!initialized) {
-            lastError = "语音引擎未初始化"
+    fun speak(text: String): Boolean {
+        if (state != State.READY) {
+            lastError = when (state) {
+                State.INITIALIZING -> "语音引擎正在初始化，请稍候"
+                State.FAILED -> "语音引擎初始化失败"
+                else -> "语音引擎未就绪"
+            }
             return false
         }
-        if (playing) {
-            return true
-        }
+        if (text.isBlank()) return true
+        if (playing) stop()
         playing = true
         val t = Thread {
             try {
-                val bytes = nativeSpeak(text, "fr", rate)
+                val bytes = nativeSpeak(text, "fr", 150)
                 if (bytes == null || bytes.isEmpty()) {
                     lastError = "语音合成失败(无 PCM)"
                     return@Thread
@@ -131,7 +158,7 @@ object Espeak {
     /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]） */
     suspend fun synthesize(text: String, voice: String = "fr", rate: Int = 150): ShortArray? =
         withContext(Dispatchers.IO) {
-            if (!initialized) return@withContext null
+            if (state != State.READY) return@withContext null
             try {
                 val bytes = nativeSpeak(text, voice, rate) ?: run {
                     lastError = "合成失败(空 PCM)"
