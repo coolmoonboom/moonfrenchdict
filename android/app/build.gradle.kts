@@ -53,6 +53,7 @@ dependencies {
     implementation("com.mikepenz:multiplatform-markdown-renderer-coil3:0.33.0")
     implementation("io.coil-kt.coil3:coil-compose:3.0.4")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation(files("libs/sherpa-onnx-1.13.7.aar"))
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

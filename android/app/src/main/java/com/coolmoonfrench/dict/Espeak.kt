@@ -8,6 +8,10 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import com.k2fsa.sherpa.onnx.OfflineTts
+import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,10 +27,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * 法语 TTS 封装（Mimic 引擎 + siwis HTS 语音）。
- * - 原生库：libttsmimiccore + libHTSEngine + libpcre2-8 + libttsmimic_french
- *   + libttsmimic_siwis_fr_zoe_hts + libmimicbridge（JNI 桥）
- * - 语音数据：assets/voices/siwis_fr_zoe_hts.htsvoice，首次运行时解压到 filesDir/voices
+ * 法语 TTS 封装（Sherpa-ONNX + Piper 神经网络语音）。
+ * - 引擎：sherpa-onnx（自带 ONNX Runtime + espeak-ng 音素化），Piper 声线
+ *   fr_FR-siwis-medium（22050Hz，深度神经网络合成，听感自然）
+ * - 模型：assets/tts/fr_FR-siwis-medium/{*.onnx,tokens.txt,espeak-ng-data}，
+ *   首次运行时解压到 filesDir/tts
  * - 初始化状态机：NOT_READY -> INITIALIZING -> READY | FAILED，失败后可重试，
  *   失败原因通过 [lastError] 暴露，UI 可直接展示。
  * - 播放采用单例协程 Job：每次 play 前先取消上一次，杜绝快速连点时的语音叠加。
@@ -41,7 +46,7 @@ object Espeak {
     private var state = State.NOT_READY
 
     @Volatile
-    private var sampleRate = 44100
+    private var sampleRate = 22050
 
     @Volatile
     private var playing = false
@@ -49,7 +54,9 @@ object Espeak {
     @Volatile
     private var lastError: String? = null
 
-    /** 朗读语速倍率（0.75 ~ 1.5，默认 1.0）。rate 基准 150，越大越快。 */
+    private var tts: OfflineTts? = null
+
+    /** 朗读语速倍率（0.75 ~ 1.5，默认 1.0）。Piper 引擎 speed 参数，1.0 为正常语速。 */
     @Volatile
     var speechRate: Float = 1f
         private set
@@ -68,16 +75,6 @@ object Espeak {
 
     /** 最近一次错误信息（null 表示无错误），供 UI 展示诊断信息 */
     fun lastError(): String? = lastError
-
-    /** 加载原生库（必须在 speak 前调用） */
-    private fun load() {
-        System.loadLibrary("ttsmimiccore")
-        System.loadLibrary("HTSEngine")
-        System.loadLibrary("pcre2-8")
-        System.loadLibrary("ttsmimic_french")
-        System.loadLibrary("ttsmimic_siwis_fr_zoe_hts")
-        System.loadLibrary("mimicbridge")
-    }
 
     /**
      * 启动初始化（幂等，非阻塞）。READY/INITIALIZING 时直接返回。
@@ -109,27 +106,54 @@ object Espeak {
     }
 
     private fun doInit(context: Context): Boolean {
-        load()
-        val voicesDir = File(context.filesDir, "voices")
-        val htsvoice = File(voicesDir, "siwis_fr_zoe_hts.htsvoice")
-        // 语音文件缺失或大小异常（可能上次复制中断）时，重建并重新复制。
-        // 期望大小：assets 里 9MB 语音；解压后应大于 8MB。
-        if (!htsvoice.exists() || htsvoice.length() < 8_000_000L) {
-            runCatching { voicesDir.deleteRecursively() }
-            voicesDir.mkdirs()
-            copyAssetsRecursive(context, "voices", voicesDir)
-            if (!htsvoice.exists() || htsvoice.length() < 8_000_000L) {
-                lastError = "语音包解压失败(htsvoice 缺失或损坏)"
+        val ttsDir = File(context.filesDir, "tts/fr_FR-siwis-medium")
+        val model = File(ttsDir, "fr_FR-siwis-medium.onnx")
+        val tokens = File(ttsDir, "tokens.txt")
+        val espeakData = File(ttsDir, "espeak-ng-data")
+        // 模型文件缺失或大小异常（可能上次复制中断）时，重建并重新复制。
+        if (!model.exists() || model.length() < 50_000_000L ||
+            !tokens.exists() || !espeakData.isDirectory
+        ) {
+            runCatching { ttsDir.deleteRecursively() }
+            ttsDir.mkdirs()
+            copyAssetsRecursive(context, "tts/fr_FR-siwis-medium", ttsDir)
+            if (!model.exists() || model.length() < 50_000_000L || !espeakData.isDirectory) {
+                lastError = "语音模型解压失败(onnx 或 espeak-ng-data 缺失)"
                 return false
             }
         }
-        val sr = nativeInit(context.filesDir.absolutePath)
-        if (sr <= 0) {
-            lastError = "语音引擎初始化失败(nativeInit=$sr)"
-            return false
+        return try {
+            val tts = OfflineTts(
+                config = OfflineTtsConfig(
+                    model = OfflineTtsModelConfig(
+                        vits = OfflineTtsVitsModelConfig(
+                            model = model.absolutePath,
+                            lexicon = "",
+                            tokens = tokens.absolutePath,
+                            dataDir = espeakData.absolutePath,
+                            dictDir = "",
+                            noiseScale = 0.667f,
+                            noiseScaleW = 0.8f,
+                            lengthScale = 1.0f
+                        ),
+                        numThreads = 2,
+                        debug = false
+                    )
+                )
+            )
+            val sr = tts.sampleRate()
+            if (sr <= 0) {
+                lastError = "TTS 引擎返回无效采样率($sr)"
+                return false
+            }
+            sampleRate = sr
+            this.tts = tts
+            true
+        } catch (e: Throwable) {
+            lastError = "TTS 引擎初始化失败: ${e.message}"
+            Log.e(TAG, "OfflineTts init failed", e)
+            false
         }
-        sampleRate = sr
-        return true
     }
 
     private fun copyAssetsRecursive(context: Context, assetPath: String, targetDir: File) {
@@ -150,6 +174,22 @@ object Espeak {
                 }
             }
         }
+    }
+
+    /** 用 Piper 引擎合成，返回 22050Hz 16bit 单声道 PCM 字节流 */
+    private fun synthesizePcm(text: String, speed: Float): ByteArray? {
+        val engine = tts ?: return null
+        val samples = engine.generate(text, 0, speed).samples
+        if (samples.isEmpty()) return null
+        // float[] -> 16bit PCM
+        val bytes = ByteArray(samples.size * 2)
+        var i = 0
+        for (s in samples) {
+            val v = (s.coerceIn(-1f, 1f) * 32767f).toInt()
+            bytes[i++] = (v and 0xFF).toByte()
+            bytes[i++] = ((v shr 8) and 0xFF).toByte()
+        }
+        return bytes
     }
 
     /**
@@ -174,9 +214,9 @@ object Espeak {
                 // 引擎尚未就绪时等待（最长 10 秒），而非直接失败
                 ensureEngineReady(onError)
 
-                // 语速：rate 基准 150（1.0x），>150 更快，<150 更慢
-                val rate = (150f * speechRate).toInt().coerceAtLeast(50)
-                val bytes = nativeSpeak(text, "fr", rate)
+                // 语速：Piper 的 speed 参数，1.0 = 正常，>1 快，<1 慢
+                val speed = speechRate.coerceIn(0.75f, 1.5f)
+                val bytes = synthesizePcm(text, speed)
                 ensureActive()
                 if (bytes == null || bytes.isEmpty()) {
                     val msg = lastError ?: "语音合成失败(无 PCM)"
@@ -234,13 +274,12 @@ object Espeak {
         }
     }
 
-    /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]）。rate 沿用当前语速倍率 */
+    /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]）。speed 沿用当前语速倍率 */
     suspend fun synthesize(text: String, voice: String = "fr"): ShortArray? =
         withContext(Dispatchers.IO) {
             if (state != State.READY) return@withContext null
             try {
-                val rate = (150f * speechRate).toInt().coerceAtLeast(50)
-                val bytes = nativeSpeak(text, voice, rate) ?: run {
+                val bytes = synthesizePcm(text, speechRate.coerceIn(0.75f, 1.5f)) ?: run {
                     lastError = "合成失败(空 PCM)"
                     return@withContext null
                 }
@@ -366,7 +405,4 @@ object Espeak {
         }
         track.release()
     }
-
-    private external fun nativeInit(dataDir: String): Int
-    private external fun nativeSpeak(text: String, voice: String, rate: Int): ByteArray?
 }
