@@ -9,6 +9,7 @@
 #include <cst_voice.h>
 #include <cst_features.h>
 #include <cst_utt_utils.h>
+#include <flite_hts_engine.h>
 #include <fr_lang.h>
 #include <siwis_fr_zoe_hts.h>
 
@@ -72,8 +73,36 @@ Java_com_coolmoonfrench_dict_Espeak_nativeInit(
     mimic_feat_set_string(vox->features, "htsvoice_file", voice_path);
     LOGI("htsvoice_file set to %s", voice_path);
 
+    /* 主动加载 htsvoice：voice 注册时 sample_rate 特征被写死为 0
+     * （此时引擎尚未加载 voice，HTS_Engine_get_sampling_frequency 返回 0），
+     * 真实采样率只有加载 htsvoice 后才可获得。加载失败立即返回错误码。
+     * 注意：Flite_HTS_Engine_load 未标记 MIMIC_CORE_PUBLIC（隐藏符号），
+     * 不能从 bridge 直接调用；改用 libHTSEngine 导出的 HTS_Engine_load。 */
+    Flite_HTS_Engine *flite_hts =
+        val_flitehtsengine(feat_val(vox->features, "flite_hts"));
+    if (flite_hts == NULL) {
+        LOGE("nativeInit: flite_hts feature is null");
+        free(voice_path);
+        (*env)->ReleaseStringUTFChars(env, dataDir, dir);
+        return -3;
+    }
+    if (!flite_hts->is_engine_loaded) {
+        char *voices = strdup(voice_path);
+        HTS_Boolean ok = HTS_Engine_load(&flite_hts->engine, &voices, 1);
+        free(voices);
+        if (ok != TRUE) {
+            LOGE("nativeInit: HTS_Engine_load failed for %s", voice_path);
+            free(voice_path);
+            (*env)->ReleaseStringUTFChars(env, dataDir, dir);
+            return -4;
+        }
+        flite_hts->is_engine_loaded = 1;
+    }
+
     g_voice = vox;
-    g_sample_rate = get_param_int(vox->features, "sample_rate", 44100);
+    g_sample_rate = (int) HTS_Engine_get_sampling_frequency(&flite_hts->engine);
+    /* 同步 feature，避免后续合成逻辑读到 0 */
+    feat_set_int(vox->features, "sample_rate", g_sample_rate);
     g_initialized = 1;
 
     free(voice_path);
