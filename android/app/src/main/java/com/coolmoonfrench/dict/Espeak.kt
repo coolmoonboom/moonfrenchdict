@@ -151,7 +151,6 @@ object Espeak {
             onError?.invoke(msg)
             return false
         }
-        if (playing) stop()
         playing = true
         val t = Thread {
             try {
@@ -195,16 +194,16 @@ object Espeak {
         return true
     }
 
-    /**
+/**
      * 朗读并自动弹出失败原因 Toast。供 UI 按钮统一调用，
      * 保证"点了没声音"时用户一定能看到具体原因。
      */
     fun speakWithFeedback(context: Context, text: String) {
         val app = context.applicationContext
         val mainHandler = Handler(Looper.getMainLooper())
-        val ok = speak(text) { err ->
+        val ok = speakDiagnostic(app, text) { status ->
             mainHandler.post {
-                Toast.makeText(app, "朗读失败：$err", Toast.LENGTH_SHORT).show()
+                Toast.makeText(app, status, Toast.LENGTH_LONG).show()
             }
         }
         if (!ok) {
@@ -212,6 +211,70 @@ object Espeak {
                 Toast.makeText(app, "朗读失败：${lastError ?: "未知错误"}", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    // 播放/合成状态回调，用于找出"无声"环节。status 已含 PCM 非零采样数与采样率。
+    private fun speakDiagnostic(context: Context, text: String, onStatus: ((String) -> Unit)?): Boolean {
+        val app = context.applicationContext
+        val onError: (String) -> Unit = { err ->
+            onStatus?.invoke("朗读失败：$err")
+        }
+        if (text.isBlank()) return true
+        if (state == State.FAILED) {
+            val msg = lastError ?: "语音引擎初始化失败"
+            onError(msg)
+            return false
+        }
+        playing = true
+        val t = Thread {
+            try {
+                if (state != State.READY) {
+                    val deadline = System.currentTimeMillis() + 10_000L
+                    while (state == State.INITIALIZING && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(50)
+                    }
+                    if (state != State.READY) {
+                        val msg = when (state) {
+                            State.FAILED -> lastError ?: "语音引擎初始化失败"
+                            State.INITIALIZING -> "语音引擎初始化超时"
+                            else -> "语音引擎未就绪"
+                        }
+                        lastError = msg
+                        onError(msg)
+                        return@Thread
+                    }
+                }
+                val rate = (150f * speechRate).toInt().coerceAtLeast(50)
+                val t0 = System.currentTimeMillis()
+                val bytes = nativeSpeak(text, "fr", rate)
+                val synthMs = System.currentTimeMillis() - t0
+                if (bytes == null || bytes.isEmpty()) {
+                    val msg = lastError ?: "语音合成失败(无 PCM)"
+                    onError(msg)
+                    return@Thread
+                }
+                var nonzero = 0
+                for (i in bytes.indices step 2) {
+                    val lo = bytes[i].toInt() and 0xFF
+                    val hi = bytes[i + 1].toInt() shl 8
+                    val s = (hi or lo)
+                    if (s != 0) nonzero++
+                }
+                val nzPct = if (bytes.isEmpty()) 0 else (100 * nonzero / (bytes.size / 2))
+                onStatus?.invoke("合成OK: 采样率=${sampleRate}Hz PCM=${bytes.size}B 非零=${nzPct}% (${synthMs}ms)")
+                playBytes(bytes, onError)
+            } catch (e: Throwable) {
+                val msg = "播放失败: ${e.message}"
+                lastError = msg
+                onError(msg)
+                Log.e(TAG, "speak failed", e)
+            } finally {
+                playing = false
+            }
+        }
+        t.isDaemon = true
+        t.start()
+        return true
     }
 
     /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]）。rate 沿用当前语速倍率 */
@@ -241,6 +304,13 @@ object Espeak {
     fun stop() { playing = false }
 
     private fun playBytes(bytes: ByteArray, onError: ((String) -> Unit)? = null) {
+        // 播放开始前计算诊断数据，帮助定位"无声"环节
+        var nonzero = 0
+        for (i in bytes.indices step 2) {
+            val s = ((bytes[i].toInt() and 0xFF) or (bytes[i + 1].toInt() shl 8)).toShort()
+            if (s != 0.toShort()) nonzero++
+        }
+        val stats = "sr=$sampleRate pcm=${bytes.size}B nonZero=$nonzero/${bytes.size / 2}"
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
@@ -252,8 +322,9 @@ object Espeak {
             onError?.invoke(msg)
             return
         }
-        // MODE_STREAM：兼容性更好（部分 MIUI/低内存设备上 MODE_STATIC 可能无输出），
-        // 且与开源翻译应用（dev.davidv.translator）的播放实现一致。
+        Log.w(TAG, "playBytes: $stats minBuf=$minBuf")
+        // MODE_STREAM：与开源 dev.davidv.translator 一致。先 play() 再循环写入，
+        // 由系统按 buffer 节奏消费，避免一次性写入超大数据后 play 的边界问题。
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -269,12 +340,15 @@ object Espeak {
                     .build()
             )
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(maxOf(minBuf, bytes.size * 2))
+            .setBufferSizeInBytes(maxOf(minBuf, bytes.size))
             .build()
         try {
+            // 分块写入（每块 4096 字节），写完一块检查并启动播放（MODE_STREAM 参考实现）
             var written = 0
+            val chunkSize = 4096
             while (written < bytes.size) {
-                val n = track.write(bytes, written, bytes.size - written, AudioTrack.WRITE_BLOCKING)
+                val len = minOf(chunkSize, bytes.size - written)
+                val n = track.write(bytes, written, len, AudioTrack.WRITE_BLOCKING)
                 if (n <= 0) {
                     val msg = "AudioTrack 写入中断(written=$written/$n)"
                     lastError = msg
@@ -286,12 +360,13 @@ object Espeak {
                     track.play()
                 }
             }
-            // 等待播放排空（带超时保护）
+            // 排空：按播放头完成度判断，而非依赖 playing 标志
+            val totalFrames = bytes.size / 2
             val deadline = System.currentTimeMillis() + 60_000L
-            while (playing && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                if (System.currentTimeMillis() > deadline) break
-                Thread.sleep(50)
+            while (track.playbackHeadPosition < totalFrames && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20)
             }
+            Log.w(TAG, "playBytes done: head=${track.playbackHeadPosition}/$totalFrames")
         } catch (e: Throwable) {
             val msg = "播放异常: ${e.message}"
             lastError = msg
