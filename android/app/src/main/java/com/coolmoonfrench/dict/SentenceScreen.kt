@@ -22,7 +22,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -97,18 +96,12 @@ fun SentenceScreen(
     var aiWords by remember { mutableStateOf<List<AIWordMeaning>?>(null) }
     var aiLoading by remember { mutableStateOf(false) }
     var aiError by remember { mutableStateOf<String?>(null) }
-    var ttsReady by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // 初始化 Mimic 法语 TTS（幂等，非阻塞）；轮询等待就绪
+    // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
         Espeak.ensureInitialized(context)
-        while (true) {
-            ttsReady = Espeak.isReady()
-            if (ttsReady) break
-            delay(250)
-        }
     }
 
     fun doAnalyze(s: String) {
@@ -218,14 +211,8 @@ fun SentenceScreen(
             if (sentence.isNotBlank()) {
                 IconButton(
                     onClick = {
-                        if (!ttsReady) {
-                            Espeak.ensureInitialized(context)
-                            android.widget.Toast.makeText(
-                                context,
-                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        } else if (!Espeak.speak(sentence)) {
+                        Espeak.ensureInitialized(context)
+                        if (!Espeak.speak(sentence)) {
                             android.widget.Toast.makeText(
                                 context,
                                 "朗读失败：${Espeak.lastError() ?: "未知错误"}",
@@ -357,7 +344,7 @@ fun SentenceScreen(
                     }
                 }
                 items(aiWords!!) { aw ->
-                    AIWordCard(aw, ttsReady)
+                    AIWordCard(aw)
                 }
             }
 
@@ -382,7 +369,7 @@ fun SentenceScreen(
             // 逐词分析卡片
             if (result != null) {
                 items(result) { wa ->
-                    WordCard(wa, repository, conjugator, context, ttsReady)
+                    WordCard(wa, repository, conjugator, context)
                 }
             }
             }
@@ -391,7 +378,7 @@ fun SentenceScreen(
 }
 
 @Composable
-private fun AIWordCard(aw: AIWordMeaning, ttsReady: Boolean) {
+private fun AIWordCard(aw: AIWordMeaning) {
     val cardContext = LocalContext.current
     Card(
         modifier = Modifier
@@ -403,14 +390,8 @@ private fun AIWordCard(aw: AIWordMeaning, ttsReady: Boolean) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = {
-                        if (!ttsReady) {
-                            Espeak.ensureInitialized(cardContext)
-                            android.widget.Toast.makeText(
-                                cardContext,
-                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        } else if (!Espeak.speak(aw.word)) {
+                        Espeak.ensureInitialized(cardContext)
+                        if (!Espeak.speak(aw.word)) {
                             android.widget.Toast.makeText(
                                 cardContext,
                                 "朗读失败：${Espeak.lastError() ?: "未知错误"}",
@@ -461,8 +442,7 @@ private fun WordCard(
     wa: WordAnalysis,
     repository: DictRepository,
     conjugator: VerbConjugator,
-    context: Context,
-    ttsReady: Boolean
+    context: Context
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -477,14 +457,8 @@ private fun WordCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = {
-                        if (!ttsReady) {
-                            Espeak.ensureInitialized(context)
-                            android.widget.Toast.makeText(
-                                context,
-                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        } else if (!Espeak.speak(wa.surface)) {
+                        Espeak.ensureInitialized(context)
+                        if (!Espeak.speak(wa.surface)) {
                             android.widget.Toast.makeText(
                                 context,
                                 "朗读失败：${Espeak.lastError() ?: "未知错误"}",

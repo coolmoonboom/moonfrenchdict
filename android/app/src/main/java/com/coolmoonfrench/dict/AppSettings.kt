@@ -29,6 +29,10 @@ class AppSettings(context: Context) {
     var debugLogEnabled by mutableStateOf(prefs.getBoolean("debug_log", false))
         private set
 
+    /** 朗读语速倍率（0.75 ~ 1.5，默认 1.0） */
+    var speechRate by mutableFloatStateOf(prefs.getFloat("speech_rate", 1f))
+        private set
+
     fun updateFontScale(v: Float) {
         val clamped = v.coerceIn(0.8f, 1.6f)
         fontScale = clamped
@@ -49,5 +53,12 @@ class AppSettings(context: Context) {
     fun updateDebugLog(v: Boolean) {
         debugLogEnabled = v
         prefs.edit().putBoolean("debug_log", v).apply()
+    }
+
+    fun updateSpeechRate(v: Float) {
+        val clamped = v.coerceIn(0.75f, 1.5f)
+        speechRate = clamped
+        prefs.edit().putFloat("speech_rate", clamped).apply()
+        Espeak.setSpeechRate(clamped)
     }
 }

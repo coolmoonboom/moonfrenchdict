@@ -35,6 +35,15 @@ object Espeak {
     @Volatile
     private var lastError: String? = null
 
+    /** 朗读语速倍率（0.75 ~ 1.5，默认 1.0）。rate 基准 150，越大越快。 */
+    @Volatile
+    var speechRate: Float = 1f
+        private set
+
+    fun setSpeechRate(v: Float) {
+        speechRate = v.coerceIn(0.75f, 1.5f)
+    }
+
     fun state(): State = state
 
     fun isReady(): Boolean = state == State.READY
@@ -120,24 +129,34 @@ object Espeak {
 
     /**
      * 合成并播放法语文本。
-     * 返回 true 表示播放已开始；false 表示引擎未就绪或播放失败。
-     * 合成与播放均在后台线程执行，不阻塞调用线程。
+     * 返回 true 表示播放任务已启动；false 表示引擎无法就绪或参数非法。
+     * 若引擎仍在初始化中，会在后台等待就绪后自动合成并播放，
+     * 不再让调用方反复看到"正在初始化"。
      */
     fun speak(text: String): Boolean {
-        if (state != State.READY) {
-            lastError = when (state) {
-                State.INITIALIZING -> "语音引擎正在初始化，请稍候"
-                State.FAILED -> "语音引擎初始化失败"
-                else -> "语音引擎未就绪"
-            }
-            return false
-        }
         if (text.isBlank()) return true
         if (playing) stop()
         playing = true
         val t = Thread {
             try {
-                val bytes = nativeSpeak(text, "fr", 150)
+                // 引擎尚未就绪时，在后台等待（最长 10 秒），而非直接失败
+                if (state != State.READY) {
+                    val deadline = System.currentTimeMillis() + 10_000L
+                    while (state == State.INITIALIZING && System.currentTimeMillis() < deadline) {
+                        Thread.sleep(50)
+                    }
+                    if (state != State.READY) {
+                        lastError = when (state) {
+                            State.FAILED -> "语音引擎初始化失败"
+                            State.INITIALIZING -> "语音引擎初始化超时"
+                            else -> "语音引擎未就绪"
+                        }
+                        return@Thread
+                    }
+                }
+                // 语速：rate 基准 150（1.0x），>150 更快，<150 更慢
+                val rate = (150f * speechRate).toInt().coerceAtLeast(50)
+                val bytes = nativeSpeak(text, "fr", rate)
                 if (bytes == null || bytes.isEmpty()) {
                     lastError = "语音合成失败(无 PCM)"
                     return@Thread
@@ -155,11 +174,12 @@ object Espeak {
         return true
     }
 
-    /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]） */
-    suspend fun synthesize(text: String, voice: String = "fr", rate: Int = 150): ShortArray? =
+    /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]）。rate 沿用当前语速倍率 */
+    suspend fun synthesize(text: String, voice: String = "fr"): ShortArray? =
         withContext(Dispatchers.IO) {
             if (state != State.READY) return@withContext null
             try {
+                val rate = (150f * speechRate).toInt().coerceAtLeast(50)
                 val bytes = nativeSpeak(text, voice, rate) ?: run {
                     lastError = "合成失败(空 PCM)"
                     return@withContext null

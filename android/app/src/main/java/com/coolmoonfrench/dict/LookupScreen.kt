@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -51,18 +50,12 @@ fun LookupScreen(
     var expansion by remember { mutableStateOf<String?>(null) }
 var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     var favoriteWords by remember { mutableStateOf(emptySet<String>()) }
-    var ttsReady by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // 初始化 Mimic 法语 TTS（幂等，非阻塞）；轮询等待就绪
+    // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
         Espeak.ensureInitialized(context)
-        while (true) {
-            ttsReady = Espeak.isReady()
-            if (ttsReady) break
-            delay(250)
-        }
     }
 
     // 防抖：每次输入取消上一次未完成的搜索，避免卡顿
@@ -184,14 +177,8 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = {
-                                            if (!ttsReady) {
-                                                Espeak.ensureInitialized(context)
-                                                android.widget.Toast.makeText(
-                                                    context,
-                                                    "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
-                                                    android.widget.Toast.LENGTH_SHORT
-                                                ).show()
-                                            } else if (!Espeak.speak(entry.word)) {
+                                            Espeak.ensureInitialized(context)
+                                            if (!Espeak.speak(entry.word)) {
                                                 android.widget.Toast.makeText(
                                                     context,
                                                     "朗读失败：${Espeak.lastError() ?: "未知错误"}",

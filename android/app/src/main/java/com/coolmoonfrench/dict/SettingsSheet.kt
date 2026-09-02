@@ -111,6 +111,28 @@ fun SettingsSheet(
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // 朗读语速
+            Text("朗读语速", fontWeight = FontWeight.Medium, fontSize = 15.sp, modifier = Modifier.padding(top = 8.dp))
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("慢", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Slider(
+                    value = settings.speechRate,
+                    onValueChange = { settings.updateSpeechRate(it) },
+                    valueRange = 0.75f..1.5f,
+                    steps = 5,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                )
+                Text("快", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                "当前：${((settings.speechRate * 100).roundToInt())}%",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
         }
     }
 }

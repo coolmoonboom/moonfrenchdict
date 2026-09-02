@@ -20,7 +20,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val TENSE_LABELS = listOf(
@@ -61,18 +60,12 @@ fun ConjugationScreen(
     var loading by remember { mutableStateOf(false) }
     var onlineError by remember { mutableStateOf<String?>(null) }
     var foundInfinitive by remember { mutableStateOf<String?>(null) }
-    var ttsReady by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // 初始化 Mimic 法语 TTS（幂等，非阻塞）；轮询等待就绪
+    // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
         Espeak.ensureInitialized(context)
-        while (true) {
-            ttsReady = Espeak.isReady()
-            if (ttsReady) break
-            delay(250)
-        }
     }
 
     fun doSearch(q: String) {
@@ -208,14 +201,8 @@ fun ConjugationScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(
                                     onClick = {
-                                        if (!ttsReady) {
-                                            Espeak.ensureInitialized(context)
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
-                                                android.widget.Toast.LENGTH_SHORT
-                                            ).show()
-                                        } else if (!Espeak.speak(c.infinitive)) {
+                                        Espeak.ensureInitialized(context)
+                                        if (!Espeak.speak(c.infinitive)) {
                                             android.widget.Toast.makeText(
                                                 context,
                                                 "朗读失败：${Espeak.lastError() ?: "未知错误"}",

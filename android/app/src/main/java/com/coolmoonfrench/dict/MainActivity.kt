@@ -84,6 +84,9 @@ class MainActivity : ComponentActivity() {
                         }
                         LaunchedEffect(Unit) {
                             repository.load()
+                            // 并行预热法语 TTS，避免进入界面后仍显示"正在初始化"
+                            Espeak.setSpeechRate(settings.speechRate)
+                            Espeak.ensureInitialized(applicationContext)
                             loaded = true
                         }
                     } else {

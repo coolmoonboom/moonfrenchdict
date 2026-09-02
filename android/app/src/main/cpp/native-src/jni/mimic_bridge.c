@@ -86,7 +86,6 @@ JNIEXPORT jbyteArray JNICALL
 Java_com_coolmoonfrench_dict_Espeak_nativeSpeak(
         JNIEnv *env, jclass clazz, jstring text, jstring voice, jint rate) {
     (void) voice;
-    (void) rate;
     if (!g_initialized || g_voice == NULL) {
         LOGE("nativeSpeak: not initialized");
         return NULL;
@@ -102,6 +101,13 @@ Java_com_coolmoonfrench_dict_Espeak_nativeSpeak(
     }
 
     pthread_mutex_lock(&g_tts_lock);
+    /* 语速控制：rate 基准为 150（1.0x），rate > 150 更快，< 150 更慢。
+     * HTS 引擎从 utterance/voice features 读取 duration_stretch，
+     * duration_stretch > 1 语速变慢、< 1 变快（speed = 1.0 / stretch）。 */
+    if (rate > 0) {
+        double stretch = (double) 150.0 / (double) rate;
+        feat_set_float(g_voice->features, "duration_stretch", (float) stretch);
+    }
     cst_wave *w = mimic_text_to_wave(utf8, g_voice);
     pthread_mutex_unlock(&g_tts_lock);
     (*env)->ReleaseStringUTFChars(env, text, utf8);

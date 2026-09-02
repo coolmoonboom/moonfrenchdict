@@ -14,23 +14,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VerbGroupScreen(conjugator: VerbConjugator) {
     var selectedFamily by remember { mutableStateOf<String?>(null) }
-    var ttsReady by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
-    // 初始化 Mimic 法语 TTS（幂等，非阻塞）；轮询等待就绪
+    // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
         Espeak.ensureInitialized(context)
-        while (true) {
-            ttsReady = Espeak.isReady()
-            if (ttsReady) break
-            delay(250)
-        }
     }
 
     SelectionContainer {
@@ -144,14 +137,8 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
                             // 朗读按钮
                             IconButton(
                                 onClick = {
-                                    if (!ttsReady) {
-                                        Espeak.ensureInitialized(context)
-                                        android.widget.Toast.makeText(
-                                            context,
-                                            "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
-                                            android.widget.Toast.LENGTH_SHORT
-                                        ).show()
-                                    } else if (!Espeak.speak(v)) {
+                                    Espeak.ensureInitialized(context)
+                                    if (!Espeak.speak(v)) {
                                         android.widget.Toast.makeText(
                                             context,
                                             "朗读失败：${Espeak.lastError() ?: "未知错误"}",
