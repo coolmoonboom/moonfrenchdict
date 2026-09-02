@@ -8,7 +8,17 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -19,6 +29,7 @@ import java.io.File
  * - 语音数据：assets/voices/siwis_fr_zoe_hts.htsvoice，首次运行时解压到 filesDir/voices
  * - 初始化状态机：NOT_READY -> INITIALIZING -> READY | FAILED，失败后可重试，
  *   失败原因通过 [lastError] 暴露，UI 可直接展示。
+ * - 播放采用单例协程 Job：每次 play 前先取消上一次，杜绝快速连点时的语音叠加。
  */
 object Espeak {
 
@@ -42,6 +53,10 @@ object Espeak {
     @Volatile
     var speechRate: Float = 1f
         private set
+
+    private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var playbackJob: Job? = null
+    private var audioTrack: AudioTrack? = null
 
     fun setSpeechRate(v: Float) {
         speechRate = v.coerceIn(0.75f, 1.5f)
@@ -142,6 +157,7 @@ object Espeak {
      * 返回 true 表示播放任务已启动；false 表示引擎已失败或参数非法（同步可判）。
      * 若引擎仍在初始化中，会在后台等待就绪后自动合成并播放。
      * 合成/播放失败时通过 [onError] 回调告知具体原因（UI 可用 Toast 展示）。
+     * 播放采用单例 Job：本方法会先取消正在进行的上一次播放，保证不会叠加。
      */
     fun speak(text: String, onError: ((String) -> Unit)? = null): Boolean {
         if (text.isBlank()) return true
@@ -151,59 +167,64 @@ object Espeak {
             onError?.invoke(msg)
             return false
         }
-        playing = true
-        val t = Thread {
+        stop()
+
+        playbackJob = playbackScope.launch {
             try {
-                // 引擎尚未就绪时，在后台等待（最长 10 秒），而非直接失败
-                if (state != State.READY) {
-                    val deadline = System.currentTimeMillis() + 10_000L
-                    while (state == State.INITIALIZING && System.currentTimeMillis() < deadline) {
-                        Thread.sleep(50)
-                    }
-                    if (state != State.READY) {
-                        val msg = when (state) {
-                            State.FAILED -> lastError ?: "语音引擎初始化失败"
-                            State.INITIALIZING -> "语音引擎初始化超时"
-                            else -> "语音引擎未就绪"
-                        }
-                        lastError = msg
-                        onError?.invoke(msg)
-                        return@Thread
-                    }
-                }
+                // 引擎尚未就绪时等待（最长 10 秒），而非直接失败
+                ensureEngineReady(onError)
+
                 // 语速：rate 基准 150（1.0x），>150 更快，<150 更慢
                 val rate = (150f * speechRate).toInt().coerceAtLeast(50)
                 val bytes = nativeSpeak(text, "fr", rate)
+                ensureActive()
                 if (bytes == null || bytes.isEmpty()) {
                     val msg = lastError ?: "语音合成失败(无 PCM)"
                     onError?.invoke(msg)
-                    return@Thread
+                    return@launch
                 }
-                playBytes(bytes, onError)
+                playPcm(bytes, onError)
+            } catch (_: CancellationException) {
+                // 被新的 speak/stop 取消：静默退出，不弹任何提示
             } catch (e: Throwable) {
                 val msg = "播放失败: ${e.message}"
                 lastError = msg
                 onError?.invoke(msg)
                 Log.e(TAG, "speak failed", e)
             } finally {
-                playing = false
+                if (playbackJob === coroutineContext[Job]) {
+                    playing = false
+                }
             }
         }
-        t.isDaemon = true
-        t.start()
         return true
     }
 
-/**
-     * 朗读并自动弹出失败原因 Toast。供 UI 按钮统一调用，
-     * 保证"点了没声音"时用户一定能看到具体原因。
-     */
+    private suspend fun ensureEngineReady(onError: ((String) -> Unit)?) {
+        if (state == State.READY) return
+        val deadline = System.currentTimeMillis() + 10_000L
+        while (state == State.INITIALIZING && System.currentTimeMillis() < deadline) {
+            delay(50)
+        }
+        if (state != State.READY) {
+            val msg = when (state) {
+                State.FAILED -> lastError ?: "语音引擎初始化失败"
+                State.INITIALIZING -> "语音引擎初始化超时"
+                else -> "语音引擎未就绪"
+            }
+            lastError = msg
+            onError?.invoke(msg)
+            throw CancellationException()
+        }
+    }
+
+    /** 朗读并自动弹出失败原因 Toast。供 UI 按钮统一调用，快速连点只会播最新一次。 */
     fun speakWithFeedback(context: Context, text: String) {
         val app = context.applicationContext
         val mainHandler = Handler(Looper.getMainLooper())
-        val ok = speakDiagnostic(app, text) { status ->
+        val ok = speak(text) { err ->
             mainHandler.post {
-                Toast.makeText(app, status, Toast.LENGTH_LONG).show()
+                Toast.makeText(app, "朗读失败：$err", Toast.LENGTH_LONG).show()
             }
         }
         if (!ok) {
@@ -211,70 +232,6 @@ object Espeak {
                 Toast.makeText(app, "朗读失败：${lastError ?: "未知错误"}", Toast.LENGTH_SHORT).show()
             }
         }
-    }
-
-    // 播放/合成状态回调，用于找出"无声"环节。status 已含 PCM 非零采样数与采样率。
-    private fun speakDiagnostic(context: Context, text: String, onStatus: ((String) -> Unit)?): Boolean {
-        val app = context.applicationContext
-        val onError: (String) -> Unit = { err ->
-            onStatus?.invoke("朗读失败：$err")
-        }
-        if (text.isBlank()) return true
-        if (state == State.FAILED) {
-            val msg = lastError ?: "语音引擎初始化失败"
-            onError(msg)
-            return false
-        }
-        playing = true
-        val t = Thread {
-            try {
-                if (state != State.READY) {
-                    val deadline = System.currentTimeMillis() + 10_000L
-                    while (state == State.INITIALIZING && System.currentTimeMillis() < deadline) {
-                        Thread.sleep(50)
-                    }
-                    if (state != State.READY) {
-                        val msg = when (state) {
-                            State.FAILED -> lastError ?: "语音引擎初始化失败"
-                            State.INITIALIZING -> "语音引擎初始化超时"
-                            else -> "语音引擎未就绪"
-                        }
-                        lastError = msg
-                        onError(msg)
-                        return@Thread
-                    }
-                }
-                val rate = (150f * speechRate).toInt().coerceAtLeast(50)
-                val t0 = System.currentTimeMillis()
-                val bytes = nativeSpeak(text, "fr", rate)
-                val synthMs = System.currentTimeMillis() - t0
-                if (bytes == null || bytes.isEmpty()) {
-                    val msg = lastError ?: "语音合成失败(无 PCM)"
-                    onError(msg)
-                    return@Thread
-                }
-                var nonzero = 0
-                for (i in bytes.indices step 2) {
-                    val lo = bytes[i].toInt() and 0xFF
-                    val hi = bytes[i + 1].toInt() shl 8
-                    val s = (hi or lo)
-                    if (s != 0) nonzero++
-                }
-                val nzPct = if (bytes.isEmpty()) 0 else (100 * nonzero / (bytes.size / 2))
-                onStatus?.invoke("合成OK: 采样率=${sampleRate}Hz PCM=${bytes.size}B 非零=${nzPct}% (${synthMs}ms)")
-                playBytes(bytes, onError)
-            } catch (e: Throwable) {
-                val msg = "播放失败: ${e.message}"
-                lastError = msg
-                onError(msg)
-                Log.e(TAG, "speak failed", e)
-            } finally {
-                playing = false
-            }
-        }
-        t.isDaemon = true
-        t.start()
-        return true
     }
 
     /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]）。rate 沿用当前语速倍率 */
@@ -300,32 +257,24 @@ object Espeak {
 
     fun isPlaying(): Boolean = playing
 
-    /** 停止播放 */
-    fun stop() { playing = false }
+    /** 停止播放：取消当前播放 Job 并释放 AudioTrack。 */
+    fun stop() {
+        playbackJob?.cancel()
+        playbackJob = null
 
-    private fun playBytes(bytes: ByteArray, onError: ((String) -> Unit)? = null) {
-        // 播放开始前计算诊断数据，帮助定位"无声"环节
-        var nonzero = 0
-        for (i in bytes.indices step 2) {
-            val s = ((bytes[i].toInt() and 0xFF) or (bytes[i + 1].toInt() shl 8)).toShort()
-            if (s != 0.toShort()) nonzero++
+        val track = audioTrack ?: return
+        audioTrack = null
+        runCatching {
+            if (track.playState != AudioTrack.PLAYSTATE_STOPPED) {
+                track.stop()
+            }
         }
-        val stats = "sr=$sampleRate pcm=${bytes.size}B nonZero=$nonzero/${bytes.size / 2}"
-        val minBuf = AudioTrack.getMinBufferSize(
-            sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        if (minBuf <= 0) {
-            val msg = "AudioTrack minBuffer 无效($minBuf)"
-            lastError = msg
-            onError?.invoke(msg)
-            return
-        }
-        Log.w(TAG, "playBytes: $stats minBuf=$minBuf")
-        // MODE_STREAM：与开源 dev.davidv.translator 一致。先 play() 再循环写入，
-        // 由系统按 buffer 节奏消费，避免一次性写入超大数据后 play 的边界问题。
-        val track = AudioTrack.Builder()
+        track.release()
+        playing = false
+    }
+
+    private fun buildAudioTrack(bufferSizeBytes: Int): AudioTrack =
+        AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -340,13 +289,33 @@ object Espeak {
                     .build()
             )
             .setTransferMode(AudioTrack.MODE_STREAM)
-            .setBufferSizeInBytes(maxOf(minBuf, bytes.size))
+            .setBufferSizeInBytes(bufferSizeBytes)
             .build()
+
+    /**
+     * 分块写入 PCM 并排空播放（协程内执行，可被取消）。
+     * 采用 MODE_STREAM：每写一块后若未在播放则 play()，由系统按 buffer 节奏消费；
+     * 排空阶段按播放头位置轮询，直到播完或被取消。
+     */
+    private suspend fun playPcm(bytes: ByteArray, onError: ((String) -> Unit)? = null) {
+        val minBuf = AudioTrack.getMinBufferSize(
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        )
+        if (minBuf <= 0) {
+            val msg = "AudioTrack minBuffer 无效($minBuf)"
+            lastError = msg
+            onError?.invoke(msg)
+            return
+        }
+        val track = buildAudioTrack(maxOf(minBuf, bytes.size))
+        audioTrack = track
         try {
-            // 分块写入（每块 4096 字节），写完一块检查并启动播放（MODE_STREAM 参考实现）
             var written = 0
             val chunkSize = 4096
             while (written < bytes.size) {
+                currentCoroutineContext().ensureActive()
                 val len = minOf(chunkSize, bytes.size - written)
                 val n = track.write(bytes, written, len, AudioTrack.WRITE_BLOCKING)
                 if (n <= 0) {
@@ -360,23 +329,42 @@ object Espeak {
                     track.play()
                 }
             }
-            // 排空：按播放头完成度判断，而非依赖 playing 标志
+
+            // 排空：按播放头完成度判断，期间可被取消
             val totalFrames = bytes.size / 2
             val deadline = System.currentTimeMillis() + 60_000L
-            while (track.playbackHeadPosition < totalFrames && System.currentTimeMillis() < deadline) {
-                Thread.sleep(20)
+            while (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                currentCoroutineContext().ensureActive()
+                if (track.playbackHeadPosition >= totalFrames) break
+                if (System.currentTimeMillis() >= deadline) break
+                delay(20)
             }
-            Log.w(TAG, "playBytes done: head=${track.playbackHeadPosition}/$totalFrames")
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             val msg = "播放异常: ${e.message}"
             lastError = msg
             onError?.invoke(msg)
             Log.e(TAG, "AudioTrack error", e)
         } finally {
-            playing = false
-            try { track.stop() } catch (_: Throwable) {}
-            track.release()
+            if (audioTrack === track) {
+                audioTrack = null
+                cleanupTrack(track)
+                playing = false
+            } else {
+                cleanupTrack(track)
+            }
         }
+    }
+
+    private fun cleanupTrack(track: AudioTrack?) {
+        if (track == null) return
+        runCatching {
+            if (track.playState != AudioTrack.PLAYSTATE_STOPPED) {
+                track.stop()
+            }
+        }
+        track.release()
     }
 
     private external fun nativeInit(dataDir: String): Int
