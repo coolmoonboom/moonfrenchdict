@@ -212,13 +212,7 @@ fun SentenceScreen(
                 IconButton(
                     onClick = {
                         Espeak.ensureInitialized(context)
-                        if (!Espeak.speak(sentence)) {
-                            android.widget.Toast.makeText(
-                                context,
-                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
+                                        Espeak.speakWithFeedback(context, sentence)
                     },
                     modifier = Modifier.size(44.dp)
                 ) {
@@ -391,13 +385,7 @@ private fun AIWordCard(aw: AIWordMeaning) {
                 IconButton(
                     onClick = {
                         Espeak.ensureInitialized(cardContext)
-                        if (!Espeak.speak(aw.word)) {
-                            android.widget.Toast.makeText(
-                                cardContext,
-                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
+                        Espeak.speakWithFeedback(cardContext, aw.word)
                     },
                     modifier = Modifier.size(32.dp)
                 ) {
@@ -458,13 +446,7 @@ private fun WordCard(
                 IconButton(
                     onClick = {
                         Espeak.ensureInitialized(context)
-                        if (!Espeak.speak(wa.surface)) {
-                            android.widget.Toast.makeText(
-                                context,
-                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
-                        }
+                                        Espeak.speakWithFeedback(context, wa.surface)
                     },
                     modifier = Modifier.size(32.dp)
                 ) {

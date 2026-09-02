@@ -211,13 +211,7 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
                         ) {
                             IconButton(onClick = {
                                 Espeak.ensureInitialized(context)
-                                if (!Espeak.speak(saved.sentence)) {
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
+                                        Espeak.speakWithFeedback(context, saved.sentence)
                             }) {
                                 Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读", modifier = Modifier.size(16.dp))
                             }
@@ -269,13 +263,7 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
                         }
                         IconButton(onClick = {
                             Espeak.ensureInitialized(context)
-                            if (!Espeak.speak(entry.word)) {
-                                android.widget.Toast.makeText(
-                                    context,
-                                    "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                    android.widget.Toast.LENGTH_SHORT
-                                ).show()
-                            }
+                                        Espeak.speakWithFeedback(context, entry.word)
                         }) {
                             Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读 ${entry.word}", modifier = Modifier.size(16.dp))
                         }

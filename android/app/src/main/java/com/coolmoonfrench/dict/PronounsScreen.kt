@@ -234,13 +234,7 @@ fun PronounsScreen(onBack: () -> Unit) {
                                 IconButton(
                                     onClick = {
                                         Espeak.ensureInitialized(context)
-                                        if (!Espeak.speak(pronoun)) {
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                                android.widget.Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
+                                        Espeak.speakWithFeedback(context, pronoun)
                                     },
                                     modifier = Modifier.size(28.dp)
                                 ) {

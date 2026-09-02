@@ -178,13 +178,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                     IconButton(
                                         onClick = {
                                             Espeak.ensureInitialized(context)
-                                            if (!Espeak.speak(entry.word)) {
-                                                android.widget.Toast.makeText(
-                                                    context,
-                                                    "朗读失败：${Espeak.lastError() ?: "未知错误"}",
-                                                    android.widget.Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
+                                        Espeak.speakWithFeedback(context, entry.word)
                                         }
                                     ) {
                                         Icon(

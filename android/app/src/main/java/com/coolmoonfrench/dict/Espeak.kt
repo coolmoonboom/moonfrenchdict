@@ -4,7 +4,10 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -93,10 +96,17 @@ object Espeak {
     private fun doInit(context: Context): Boolean {
         load()
         val voicesDir = File(context.filesDir, "voices")
-        if (!voicesDir.exists() || !File(voicesDir, "siwis_fr_zoe_hts.htsvoice").exists()) {
-            voicesDir.deleteRecursively()
+        val htsvoice = File(voicesDir, "siwis_fr_zoe_hts.htsvoice")
+        // 语音文件缺失或大小异常（可能上次复制中断）时，重建并重新复制。
+        // 期望大小：assets 里 9MB 语音；解压后应大于 8MB。
+        if (!htsvoice.exists() || htsvoice.length() < 8_000_000L) {
+            runCatching { voicesDir.deleteRecursively() }
             voicesDir.mkdirs()
             copyAssetsRecursive(context, "voices", voicesDir)
+            if (!htsvoice.exists() || htsvoice.length() < 8_000_000L) {
+                lastError = "语音包解压失败(htsvoice 缺失或损坏)"
+                return false
+            }
         }
         val sr = nativeInit(context.filesDir.absolutePath)
         if (sr <= 0) {
@@ -113,7 +123,7 @@ object Espeak {
         for (child in children) {
             val p = "$assetPath/$child"
             val out = File(targetDir, child)
-            if (out.exists()) continue
+            // 不跳过已存在文件，确保复制完整（源文件会覆盖，幂等无害）
             // assets.list() 对目录返回子项数组，对文件返回 null。
             if (assetManager.list(p)?.isNotEmpty() == true) {
                 out.mkdirs()
@@ -129,12 +139,18 @@ object Espeak {
 
     /**
      * 合成并播放法语文本。
-     * 返回 true 表示播放任务已启动；false 表示引擎无法就绪或参数非法。
-     * 若引擎仍在初始化中，会在后台等待就绪后自动合成并播放，
-     * 不再让调用方反复看到"正在初始化"。
+     * 返回 true 表示播放任务已启动；false 表示引擎已失败或参数非法（同步可判）。
+     * 若引擎仍在初始化中，会在后台等待就绪后自动合成并播放。
+     * 合成/播放失败时通过 [onError] 回调告知具体原因（UI 可用 Toast 展示）。
      */
-    fun speak(text: String): Boolean {
+    fun speak(text: String, onError: ((String) -> Unit)? = null): Boolean {
         if (text.isBlank()) return true
+        if (state == State.FAILED) {
+            // 引擎已确定失败：同步返回 false，让 UI 立即提示真实原因
+            val msg = lastError ?: "语音引擎初始化失败"
+            onError?.invoke(msg)
+            return false
+        }
         if (playing) stop()
         playing = true
         val t = Thread {
@@ -146,11 +162,13 @@ object Espeak {
                         Thread.sleep(50)
                     }
                     if (state != State.READY) {
-                        lastError = when (state) {
-                            State.FAILED -> "语音引擎初始化失败"
+                        val msg = when (state) {
+                            State.FAILED -> lastError ?: "语音引擎初始化失败"
                             State.INITIALIZING -> "语音引擎初始化超时"
                             else -> "语音引擎未就绪"
                         }
+                        lastError = msg
+                        onError?.invoke(msg)
                         return@Thread
                     }
                 }
@@ -158,12 +176,15 @@ object Espeak {
                 val rate = (150f * speechRate).toInt().coerceAtLeast(50)
                 val bytes = nativeSpeak(text, "fr", rate)
                 if (bytes == null || bytes.isEmpty()) {
-                    lastError = "语音合成失败(无 PCM)"
+                    val msg = lastError ?: "语音合成失败(无 PCM)"
+                    onError?.invoke(msg)
                     return@Thread
                 }
-                playBytes(bytes)
+                playBytes(bytes, onError)
             } catch (e: Throwable) {
-                lastError = "播放失败: ${e.message}"
+                val msg = "播放失败: ${e.message}"
+                lastError = msg
+                onError?.invoke(msg)
                 Log.e(TAG, "speak failed", e)
             } finally {
                 playing = false
@@ -172,6 +193,25 @@ object Espeak {
         t.isDaemon = true
         t.start()
         return true
+    }
+
+    /**
+     * 朗读并自动弹出失败原因 Toast。供 UI 按钮统一调用，
+     * 保证"点了没声音"时用户一定能看到具体原因。
+     */
+    fun speakWithFeedback(context: Context, text: String) {
+        val app = context.applicationContext
+        val mainHandler = Handler(Looper.getMainLooper())
+        val ok = speak(text) { err ->
+            mainHandler.post {
+                Toast.makeText(app, "朗读失败：$err", Toast.LENGTH_SHORT).show()
+            }
+        }
+        if (!ok) {
+            mainHandler.post {
+                Toast.makeText(app, "朗读失败：${lastError ?: "未知错误"}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     /** 合成文本，返回 PCM（short[]，采样率见 [sampleRate]）。rate 沿用当前语速倍率 */
@@ -200,16 +240,20 @@ object Espeak {
     /** 停止播放 */
     fun stop() { playing = false }
 
-    private fun playBytes(bytes: ByteArray) {
+    private fun playBytes(bytes: ByteArray, onError: ((String) -> Unit)? = null) {
         val minBuf = AudioTrack.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
         if (minBuf <= 0) {
-            lastError = "AudioTrack minBuffer 无效($minBuf)"
+            val msg = "AudioTrack minBuffer 无效($minBuf)"
+            lastError = msg
+            onError?.invoke(msg)
             return
         }
+        // MODE_STREAM：兼容性更好（部分 MIUI/低内存设备上 MODE_STATIC 可能无输出），
+        // 且与开源翻译应用（dev.davidv.translator）的播放实现一致。
         val track = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -224,24 +268,34 @@ object Espeak {
                     .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                     .build()
             )
-            .setTransferMode(AudioTrack.MODE_STATIC)
-            .setBufferSizeInBytes(maxOf(bytes.size, minBuf))
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(maxOf(minBuf, bytes.size * 2))
             .build()
         try {
-            val written = track.write(bytes, 0, bytes.size)
-            if (written != bytes.size) {
-                lastError = "AudioTrack 写入不完整($written/${bytes.size})"
+            var written = 0
+            while (written < bytes.size) {
+                val n = track.write(bytes, written, bytes.size - written, AudioTrack.WRITE_BLOCKING)
+                if (n <= 0) {
+                    val msg = "AudioTrack 写入中断(written=$written/$n)"
+                    lastError = msg
+                    onError?.invoke(msg)
+                    return
+                }
+                written += n
+                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                    track.play()
+                }
             }
-            playing = true
-            track.play()
-            // 播放循环带超时保护，避免异常设备上死循环
-            val deadline = System.currentTimeMillis() + 30_000L
+            // 等待播放排空（带超时保护）
+            val deadline = System.currentTimeMillis() + 60_000L
             while (playing && track.playState == AudioTrack.PLAYSTATE_PLAYING) {
                 if (System.currentTimeMillis() > deadline) break
                 Thread.sleep(50)
             }
         } catch (e: Throwable) {
-            lastError = "播放异常: ${e.message}"
+            val msg = "播放异常: ${e.message}"
+            lastError = msg
+            onError?.invoke(msg)
             Log.e(TAG, "AudioTrack error", e)
         } finally {
             playing = false
