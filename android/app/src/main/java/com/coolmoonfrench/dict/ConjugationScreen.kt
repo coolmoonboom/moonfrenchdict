@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -18,6 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val TENSE_LABELS = listOf(
@@ -58,8 +61,19 @@ fun ConjugationScreen(
     var loading by remember { mutableStateOf(false) }
     var onlineError by remember { mutableStateOf<String?>(null) }
     var foundInfinitive by remember { mutableStateOf<String?>(null) }
+    var ttsReady by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+
+    // 初始化 Mimic 法语 TTS（幂等，非阻塞）；轮询等待就绪
+    LaunchedEffect(Unit) {
+        Espeak.ensureInitialized(context)
+        while (true) {
+            ttsReady = Espeak.isReady()
+            if (ttsReady) break
+            delay(250)
+        }
+    }
 
     fun doSearch(q: String) {
         query = q
@@ -192,6 +206,31 @@ fun ConjugationScreen(
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(
+                                    onClick = {
+                                        if (!ttsReady) {
+                                            Espeak.ensureInitialized(context)
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "语音引擎" + (Espeak.lastError()?.let { "：$it" } ?: "正在初始化，请稍候"),
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else if (!Espeak.speak(c.infinitive)) {
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "朗读失败：${Espeak.lastError() ?: "未知错误"}",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    },
+                                    modifier = Modifier.size(40.dp)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = "朗读 ${c.infinitive}",
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(c.infinitive, fontSize = 24.sp, fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer)
