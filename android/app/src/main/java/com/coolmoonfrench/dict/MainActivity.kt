@@ -12,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.Notes
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -119,6 +120,7 @@ fun MainTabs(
     var showFavorites by remember { mutableStateOf(false) }
     var showAISettings by remember { mutableStateOf(false) }
     var aiRefreshKey by remember { mutableStateOf(0) }
+    var showQuestionTypes by remember { mutableStateOf(false) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -190,6 +192,14 @@ fun MainTabs(
                     onClick = {
                         scope.launch { drawerState.close() }
                         showPronouns = true
+                    }
+                )
+                DrawerItem(
+                    icon = Icons.AutoMirrored.Filled.Help,
+                    label = "问句类型",
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        showQuestionTypes = true
                     }
                 )
 
@@ -356,6 +366,23 @@ fun MainTabs(
         }
     }
 
+    // 问句类型
+    if (showQuestionTypes) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            QuestionTypeScreen(
+                prefs = aiPrefs,
+                onOpenSettings = {
+                    showQuestionTypes = false
+                    showAISettings = true
+                },
+                onBack = { showQuestionTypes = false }
+            )
+        }
+    }
+
     // 系统返回键处理：二级界面优先关闭，抽屉打开时先关闭抽屉
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
     BackHandler(enabled = showFavorites) { showFavorites = false }
@@ -366,6 +393,7 @@ fun MainTabs(
     BackHandler(enabled = showHistory) { showHistory = false }
     BackHandler(enabled = showGrammar) { showGrammar = false }
     BackHandler(enabled = showPronouns) { showPronouns = false }
+    BackHandler(enabled = showQuestionTypes) { showQuestionTypes = false }
 
     // 设置弹窗
     if (showSettings) {

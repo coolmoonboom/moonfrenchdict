@@ -11,8 +11,8 @@ android {
         applicationId = "com.coolmoonfrench.dict"
         minSdk = 24
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.0.8"
+        versionCode = 8
+        versionName = "1.0.9"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
