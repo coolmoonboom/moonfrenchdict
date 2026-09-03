@@ -13,6 +13,10 @@ android {
         targetSdk = 34
         versionCode = 7
         versionName = "1.0.8"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     compileOptions {

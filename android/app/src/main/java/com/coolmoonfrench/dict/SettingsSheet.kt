@@ -122,7 +122,6 @@ fun SettingsSheet(
                     value = settings.speechRate,
                     onValueChange = { settings.updateSpeechRate(it) },
                     valueRange = 0.75f..1.5f,
-                    steps = 5,
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
                 )
                 Text("快", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
