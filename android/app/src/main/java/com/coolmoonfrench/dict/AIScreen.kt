@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.text.Html
+import android.widget.TextView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -14,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.List
@@ -37,14 +38,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mikepenz.markdown.coil3.Coil3ImageTransformerImpl
-import com.mikepenz.markdown.m3.Markdown
+import androidx.compose.ui.viewinterop.AndroidView
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -350,7 +352,7 @@ fun AIScreen(
                 modifier = Modifier.fillMaxSize().weight(1f),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
             ) {
-                items(messages) { msg ->
+                items(messages, key = { it.timestamp to it.content.hashCode() }) { msg ->
                     AIBubble(
                         message = msg,
                         isFavorite = msg.content in favs,
@@ -393,13 +395,28 @@ fun AIScreen(
             }
         }
 
-        // 消息变化或加载状态变化时自动滚动到底部
+        // 消息变化或加载状态变化时自动滚动到底部。
+        // 只在消息数量增加或开始生成时滚动，用户手动上滑回看历史时不做强制跳转。
+        var lastHandledCount by remember { mutableStateOf(-1) }
         LaunchedEffect(messages.size, loading, dataReady, refreshKey) {
-            if (dataReady && (messages.isNotEmpty() || loading)) {
-                val target = if (loading) messages.size else messages.size - 1
-                if (target >= 0) {
-                    listState.scrollToItem(target)
+            if (!dataReady) return@LaunchedEffect
+            val totalCount = messages.size
+            val suppressive = lastHandledCount == totalCount
+            if (loading) {
+                if (!suppressive) {
+                    listState.scrollToItem(messages.size)
                 }
+                lastHandledCount = messages.size
+            } else if (totalCount > lastHandledCount) {
+                // 新增了消息（自己发的或 AI 回复完整返回）时滚到底部
+                val target = if (totalCount > 0) totalCount - 1 else 0
+                listState.scrollToItem(target)
+                lastHandledCount = totalCount
+            } else if (lastHandledCount < 0) {
+                // 首次进入/切换会话：定位到最新一条
+                val target = if (totalCount > 0) totalCount - 1 else 0
+                listState.scrollToItem(target)
+                lastHandledCount = totalCount
             }
         }
 
@@ -583,18 +600,19 @@ private fun AIBubble(
     onToggleFavorite: () -> Unit
 ) {
     val isUser = message.role == "user"
+    val bubbleColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+    val contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    // 应用内「全局字体大小」缩放（Compose 通过 LocalDensity 注入，需换算给原生 TextView）
+    val fontScaleOverride = LocalDensity.current.fontScale / LocalContext.current.resources.configuration.fontScale
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(if (isUser) 0.78f else 0.92f)
+                .fillMaxWidth() // 横向铺满手机宽度
                 .clip(RoundedCornerShape(16.dp))
-                .background(
-                    if (isUser) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.surfaceVariant
-                )
+                .background(bubbleColor)
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -661,24 +679,34 @@ private fun AIBubble(
                         }
                     }
                 }
-                if (isUser) {
-                    SelectionContainer {
-                        Text(
-                            message.content,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
+                // 文本内容：Android 原生 TextView（textIsSelectable），长按弹出系统级文本选择菜单，
+                // 内容先转成 HTML，自动换行铺满，无截断、完整展示。
+                val html = if (isUser) {
+                    MarkdownToHtml.plainTextToHtml(message.content)
                 } else {
-                    SelectionContainer {
-                        Markdown(
-                            content = MarkdownSanitizer.sanitize(message.content),
-                            imageTransformer = Coil3ImageTransformerImpl,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
+                    MarkdownToHtml.convert(MarkdownSanitizer.sanitize(message.content))
                 }
+                AndroidView(
+                    factory = { ctx ->
+                        TextView(ctx).apply {
+                            setTextIsSelectable(true)
+                            setLineSpacing(0f, 1.2f)
+                            setPadding(0, 0, 0, 0)
+                        }
+                    },
+                    update = { tv ->
+                        tv.setTextColor(contentColor.toArgb())
+                        tv.textSize = 15f * fontScaleOverride
+                        tv.text = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT)
+                        tv.setLinkTextColor(contentColor.toArgb())
+                        // 让 TextView 参与测量，确保内容多高就长多高（自动换行、完整展示）
+                        tv.layoutParams = tv.layoutParams?.apply {
+                            width = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                            height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
 
