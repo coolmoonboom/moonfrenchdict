@@ -4,8 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.text.Html
 import android.widget.TextView
+import io.noties.markwon.Markwon
+import io.noties.markwon.ext.tables.TablePlugin
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -603,7 +604,8 @@ private fun AIBubble(
     val bubbleColor = if (isUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
     val contentColor = if (isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     // 应用内「全局字体大小」缩放（Compose 通过 LocalDensity 注入，需换算给原生 TextView）
-    val fontScaleOverride = LocalDensity.current.fontScale / LocalContext.current.resources.configuration.fontScale
+    val context = LocalContext.current
+    val fontScaleOverride = LocalDensity.current.fontScale / context.resources.configuration.fontScale
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
@@ -679,12 +681,12 @@ private fun AIBubble(
                         }
                     }
                 }
-                // 文本内容：Android 原生 TextView（textIsSelectable），长按弹出系统级文本选择菜单，
-                // 内容先转成 HTML，自动换行铺满，无截断、完整展示。
-                val html = if (isUser) {
-                    MarkdownToHtml.plainTextToHtml(message.content)
-                } else {
-                    MarkdownToHtml.convert(MarkdownSanitizer.sanitize(message.content))
+                // 文本内容：用高星开源库 Markwon（commonmark 内核）渲染成原生 Spannable，
+                // 自动换行铺满、支持粗体/斜体/代码/列表/表格，且保留 TextView 系统级长按选择菜单。
+                val markwon = remember(contentColor, fontScaleOverride) {
+                    Markwon.builder(context)
+                        .usePlugin(TablePlugin.create(context))
+                        .build()
                 }
                 AndroidView(
                     factory = { ctx ->
@@ -697,7 +699,7 @@ private fun AIBubble(
                     update = { tv ->
                         tv.setTextColor(contentColor.toArgb())
                         tv.textSize = 15f * fontScaleOverride
-                        tv.text = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT)
+                        markwon.setMarkdown(tv, message.content)
                         tv.setLinkTextColor(contentColor.toArgb())
                         // 让 TextView 参与测量，确保内容多高就长多高（自动换行、完整展示）
                         tv.layoutParams = tv.layoutParams?.apply {

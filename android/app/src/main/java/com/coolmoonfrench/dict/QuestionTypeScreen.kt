@@ -3,8 +3,9 @@ package com.coolmoonfrench.dict
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.text.Html
 import android.widget.TextView
+import io.noties.markwon.Markwon
+import io.noties.markwon.ext.tables.TablePlugin
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,9 +43,9 @@ private data class QTItem(
 private fun buildQuestionPrompt(query: String): String {
     return """
 你是法语老师。请把下面这句法语改写成三种常见的疑问表达，逐行给出、行与行之间留一个空行，只输出三个句子，不要讲解、不要多余文字：
-1. 一般疑问句（陈述语序，不倒装）：句子
+1. 口语疑问句（陈述语序、不倒装）：句子
 2. est-ce que 疑问句：句子
-3. 主谓倒装疑问句：句子
+3. 书面正式疑问句（主谓倒装）：句子
 
 要求：保持原意，若原句本身带疑问词（qui/que/où/quand/comment/pourquoi/combien/quel 等）也要保留；三种形式都用同一个疑问词对应的正确语序。每行开头保留「1.」「2.」「3.」序号。
 
@@ -255,7 +256,7 @@ private fun QuestionTypeItem(
                 .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             SelectableMarkdownTextView(
-                html = MarkdownToHtml.plainTextToHtml(item.query),
+                markdown = item.query,
                 contentColor = MaterialTheme.colorScheme.onPrimary.toArgb(),
                 fontScaleOverride = fontScaleOverride
             )
@@ -281,7 +282,7 @@ private fun QuestionTypeItem(
                 }
                 item.reply != null -> {
                     SelectableMarkdownTextView(
-                        html = MarkdownToHtml.convert(MarkdownSanitizer.sanitize(item.reply)),
+                        markdown = item.reply,
                         contentColor = MaterialTheme.colorScheme.onSurface.toArgb(),
                         fontScaleOverride = fontScaleOverride
                     )
@@ -316,10 +317,16 @@ private fun QuestionTypeItem(
 /** 可选中、支持 Markdown 的 TextView 气泡（与首页 AI 气泡一致，长按弹系统文本选择菜单） */
 @Composable
 private fun SelectableMarkdownTextView(
-    html: String,
+    markdown: String,
     contentColor: Int,
     fontScaleOverride: Float
 ) {
+    val context = LocalContext.current
+    val markwon = remember(contentColor, fontScaleOverride) {
+        Markwon.builder(context)
+            .usePlugin(TablePlugin.create(context))
+            .build()
+    }
     AndroidView(
         factory = { ctx ->
             TextView(ctx).apply {
@@ -331,7 +338,7 @@ private fun SelectableMarkdownTextView(
         update = { tv ->
             tv.setTextColor(contentColor)
             tv.textSize = 15f * fontScaleOverride
-            tv.text = Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT)
+            markwon.setMarkdown(tv, markdown)
             tv.setLinkTextColor(contentColor)
             tv.layoutParams = tv.layoutParams?.apply {
                 width = android.view.ViewGroup.LayoutParams.MATCH_PARENT

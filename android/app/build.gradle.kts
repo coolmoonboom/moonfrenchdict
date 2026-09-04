@@ -11,8 +11,8 @@ android {
         applicationId = "com.coolmoonfrench.dict"
         minSdk = 24
         targetSdk = 34
-        versionCode = 9
-        versionName = "1.0.10"
+        versionCode = 10
+        versionName = "1.0.11"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -55,6 +55,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.33.0")
     implementation("com.mikepenz:multiplatform-markdown-renderer-coil3:0.33.0")
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.coil-kt.coil3:coil-compose:3.0.4")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation(files("libs/sherpa-onnx-1.13.7.aar"))
