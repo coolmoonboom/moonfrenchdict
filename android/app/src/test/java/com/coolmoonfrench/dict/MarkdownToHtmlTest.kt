@@ -13,9 +13,11 @@ import org.junit.Test
  */
 class MarkdownToHtmlTest {
 
-    /** 去掉全部 HTML 标签后得到的纯文本（近似屏幕可见内容）。 */
+    /** 去掉全部 HTML 标签后得到的纯文本（近似屏幕可见内容，&nbsp;、<br/> 还原为空格/换行）。 */
     private fun visible(html: String): String =
-        html.replace(Regex("<[^>]+>"), "")
+        html.replace("&nbsp;", " ")
+            .replace(Regex("<br/?>"), "\n")
+            .replace(Regex("<[^>]+>"), "")
 
     // ---------- 报障截图回归 ----------
 
@@ -47,10 +49,12 @@ class MarkdownToHtmlTest {
             | Soutenue | littéraire | 少见 |
         """.trimIndent()
         val html = MarkdownToHtml.convert(md)
-        assertTrue(html.startsWith("<pre>"))
-        assertTrue(html.endsWith("</pre>"))
-        assertTrue(html.contains("<b>Courante</b>"))
-        assertTrue(html.contains("<i>Quelque chose</i>"))
+        assertTrue(html.startsWith("<tt>"))
+        assertTrue(html.endsWith("</tt>"))
+        assertTrue("表头加粗缺失", html.contains("<b>Courante</b>"))
+        assertTrue(html.contains("<i>Quelque&nbsp;chose</i>"))
+        assertTrue("行间用 <br/> 分隔", html.contains("<br/>"))
+        assertTrue("对齐空格需用 &nbsp; 保留", html.contains("&nbsp;"))
         assertFalse("管道符残留", html.contains("|"))
         assertFalse("分隔行残留", html.contains("---"))
     }
@@ -177,11 +181,11 @@ class MarkdownToHtmlTest {
         assertTrue(html.contains("<h1>H1</h1>"))
         assertTrue(html.contains("<hr/>"))
         assertTrue(html.contains("<ol><li>第一</li><li>第二</li></ol>"))
-        assertTrue(html.contains("<pre><code>"))
+        assertTrue(html.contains("<code>"))
         // 代码块内不再执行行内转换
         assertTrue(html.contains("**不动**"))
         // 代码块之外不得出现裸星号
-        val outsideCode = html.replace(Regex("<pre><code>[\\s\\S]*?</code></pre>"), "")
+        val outsideCode = html.replace(Regex("<code>[\\s\\S]*?</code>"), "")
         assertFalse("代码块外出现裸星号: $outsideCode", outsideCode.contains("**"))
     }
 
@@ -218,10 +222,11 @@ class MarkdownToHtmlTest {
             | soir | Soir |
         """.trimIndent()
         val html = MarkdownToHtml.convert(md)
-        assertTrue(html.startsWith("<pre>"))
+        assertTrue(html.startsWith("<tt>"))
+        assertTrue(html.endsWith("</tt>"))
         // 表头加粗
         assertTrue(html.contains("<b>Mot"))
-        // 三列的列头（第 2 列）起始位置对齐：去标签后的三行文本应完全一致于预期
+        // 三行的列头（第 2 列）起始位置对齐：去标签后的三行文本应完全一致于预期
         val lines = visible(html).split('\n').map { it.trimEnd() }
         assertEquals(
             listOf(
@@ -255,7 +260,7 @@ class MarkdownToHtmlTest {
         )
         for (s in samples) {
             val html = MarkdownToHtml.convert(s)
-            val outsideCode = html.replace(Regex("<pre><code>.*?</code></pre>"), "")
+            val outsideCode = html.replace(Regex("<code>.*?</code>"), "")
             assertFalse("marker 泄漏: $s -> $html", outsideCode.contains("**"))
             assertFalse("漏 |: $s -> $html", outsideCode.contains("|"))
         }

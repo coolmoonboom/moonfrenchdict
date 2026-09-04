@@ -47,7 +47,14 @@ object MarkdownToHtml {
                     body.append(lines[j]).append('\n')
                     j++
                 }
-                out.append("<pre><code>").append(esc(body.toString())).append("</code></pre>")
+                // fromHtml 对 <pre> 内换行/空格支持不稳，代码块同样转成 <code> + <br/> + &nbsp; 保证换行与缩进可见
+                val codeLines = esc(body.toString()).split("\n")
+                out.append("<code>")
+                codeLines.forEachIndexed { idx, l ->
+                    if (idx > 0) out.append("<br/>")
+                    out.append(l.replace(" ", "&nbsp;"))
+                }
+                out.append("</code>")
                 i = j + 1
                 continue
             }
@@ -229,13 +236,17 @@ object MarkdownToHtml {
                 else "$htmlCell${" ".repeat(pad)}"
             }.joinToString("  ")
 
-        out.append("<pre>")
-        out.append(rowLine(header, boldHeader = true))
-        for (row in rows.drop(1)) {
-            out.append('\n')
-            out.append(rowLine(row, boldHeader = false))
+        // Html.fromHtml 不支持 <pre>，行内空格/换行会被折叠导致表格挤成一团。
+        // 改用 <tt>（等宽）+ &nbsp;（保留对齐空格）+ <br/>（保留行结构）保证表格在 TextView 里可读。
+        val bodyLines = ArrayList<String>()
+        bodyLines.add(rowLine(header, boldHeader = true))
+        rows.drop(1).forEach { bodyLines.add(rowLine(it, boldHeader = false)) }
+        out.append("<tt>")
+        bodyLines.forEachIndexed { idx, line ->
+            if (idx > 0) out.append("<br/>")
+            out.append(line.replace(" ", "&nbsp;"))
         }
-        out.append("</pre>")
+        out.append("</tt>")
         return j
     }
 

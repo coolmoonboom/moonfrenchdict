@@ -131,21 +131,6 @@ fun QuestionTypeScreen(
             }
         }
 
-        // 说明卡
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-        ) {
-            Text(
-                "输入任意法语问句，AI 会同时生成三种疑问形式：一般疑问句（陈述语序）、est-ce que 疑问句、主谓倒装疑问句。需先在右上角配置大模型。",
-                modifier = Modifier.padding(12.dp),
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-
         // 未配置模型：给出引导
         if (!hasConfig) {
             Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
