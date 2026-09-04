@@ -80,7 +80,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
             // 后台线程执行全部查询，避免阻塞 UI
             val exact = withContext(Dispatchers.IO) { repository.lookupExact(q) }
             if (exact.isNotEmpty()) {
-                withContext(Dispatchers.IO) { repository.addHistory(q, settings.historyLimit) }
+                withContext(Dispatchers.IO) { repository.addHistory(q) }
                 val first = exact.first()
                 val verb = withContext(Dispatchers.IO) { conjugator.isVerb(first.word) }
                 withContext(Dispatchers.Main) {

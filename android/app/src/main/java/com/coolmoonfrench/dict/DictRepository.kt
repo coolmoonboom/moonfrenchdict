@@ -354,6 +354,15 @@ class DictRepository(private val context: Context) {
         return prefs.getStringSet("words", emptySet())?.contains(word) ?: false
     }
 
+    /** 收藏词原样集合（用于同步打包） */
+    fun favoriteWords(): Set<String> =
+        prefs.getStringSet("words", emptySet()) ?: emptySet()
+
+    /** 整体替换收藏词（用于同步解包/合并回写） */
+    fun replaceFavorites(words: Collection<String>) {
+        prefs.edit().putStringSet("words", words.toSet()).apply()
+    }
+
     // ---------- 查词历史 ----------
 
     private val historyPrefs by lazy {
@@ -373,8 +382,22 @@ class DictRepository(private val context: Context) {
         return result
     }
 
-    /** 记录一次查词，按 limit 截断历史 */
-    fun addHistory(word: String, limit: Int = 50) {
+    /** 查词历史原样词表（新→旧，用于同步打包，不依赖词库命中） */
+    fun historyWords(): List<String> {
+        val json = historyPrefs.getString("words", "[]") ?: "[]"
+        val arr = JSONArray(json)
+        val list = mutableListOf<String>()
+        for (i in 0 until arr.length()) list.add(arr.optString(i))
+        return list
+    }
+
+    /** 整体替换查词历史（用于同步解包/合并回写） */
+    fun replaceHistory(words: List<String>) {
+        historyPrefs.edit().putString("words", JSONArray(words).toString()).apply()
+    }
+
+/** 记录一次查词（历史无上限，全部保留） */
+    fun addHistory(word: String, limit: Int = Int.MAX_VALUE) {
         val norm = word.trim()
         if (norm.isEmpty()) return
         val json = historyPrefs.getString("words", "[]") ?: "[]"
@@ -383,11 +406,7 @@ class DictRepository(private val context: Context) {
         for (i in 0 until arr.length()) list.add(arr.optString(i))
         list.removeAll { it.equals(norm, ignoreCase = true) }
         list.add(0, norm)
-        if (list.size > limit) {
-            for (i in 0 until list.size - limit) {
-                list.removeAt(list.size - 1)
-            }
-        }
+        if (list.size > limit) list.subList(limit, list.size).clear()
         historyPrefs.edit().putString("words", JSONArray(list).toString()).apply()
     }
 

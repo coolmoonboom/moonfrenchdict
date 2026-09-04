@@ -33,6 +33,16 @@ class AppSettings(context: Context) {
     var speechRate by mutableFloatStateOf(prefs.getFloat("speech_rate", 1f))
         private set
 
+    /** 自动同步间隔（小时，0=关闭，仅手动同步） */
+    var syncIntervalHours by mutableIntStateOf(prefs.getInt("sync_interval_hours", 0))
+        private set
+
+    fun updateSyncInterval(v: Int) {
+        val clamped = v.coerceIn(0, 24)
+        syncIntervalHours = clamped
+        prefs.edit().putInt("sync_interval_hours", clamped).apply()
+    }
+
     fun updateFontScale(v: Float) {
         val clamped = v.coerceIn(0.8f, 1.6f)
         fontScale = clamped

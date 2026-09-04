@@ -5,6 +5,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -14,6 +15,8 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsSheet(
     settings: AppSettings,
+    repository: DictRepository,
+    aiPrefs: AIPreferences,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -50,24 +53,51 @@ fun SettingsSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-            // 查词记录最大数量
-            Text("查词记录最大数量", fontWeight = FontWeight.Medium, fontSize = 15.sp, modifier = Modifier.padding(top = 8.dp))
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("10", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Slider(
-                    value = settings.historyLimit.toFloat(),
-                    onValueChange = { settings.updateHistoryLimit(it.roundToInt()) },
-                    valueRange = 10f..100f,
-                    steps = 8,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                )
-                Text("100", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            // 查词记录：无上限
             Text(
-                "当前：${settings.historyLimit} 条",
+                "查词记录：无上限（全部保留）",
+                fontWeight = FontWeight.Medium,
+                fontSize = 15.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            Text(
+                "已同步到网盘的记录会永久保存。",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ---------- 同步设置 ----------
+            Text("同步设置", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(vertical = 4.dp))
+
+            Text("同步间隔", fontWeight = FontWeight.Medium, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("关", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Slider(
+                    value = settings.syncIntervalHours.toFloat(),
+                    onValueChange = { settings.updateSyncInterval(it.roundToInt()) },
+                    valueRange = 0f..24f,
+                    steps = 6,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                )
+                Text("24h", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(
+                if (settings.syncIntervalHours <= 0) "当前：关闭（仅手动同步）"
+                else "当前：每 ${settings.syncIntervalHours} 小时自动同步",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
+            SyncActions(
+                context = LocalContext.current,
+                repository = repository,
+                aiPrefs = aiPrefs,
+                settings = settings,
+                onDismiss = onDismiss
             )
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))

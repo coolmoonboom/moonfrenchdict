@@ -368,6 +368,9 @@ class AIPreferences(context: Context) {
         prefs.edit().putString("ai_favorites", arr.toString()).apply()
     }
 
+    /** 整体替换 AI 收藏（用于同步解包/合并回写） */
+    fun replaceAIFavorites(list: List<AIFavorite>) = saveAIFavorites(list)
+
     // ---------- 句子收藏 ----------
     fun loadSentenceFavorites(): List<SavedSentence> {
         val json = prefs.getString("sentence_favorites", "[]") ?: "[]"
@@ -401,4 +404,7 @@ class AIPreferences(context: Context) {
         list.forEach { arr.put(it.toJson()) }
         prefs.edit().putString("sentence_favorites", arr.toString()).apply()
     }
+
+    /** 整体替换句子收藏（用于同步解包/合并回写） */
+    fun replaceSentenceFavorites(list: List<SavedSentence>) = saveSentenceFavorites(list)
 }

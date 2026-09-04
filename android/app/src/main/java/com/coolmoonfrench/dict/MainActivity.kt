@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TextFields
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,12 +31,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.shape.CircleShape
 
 class MainActivity : ComponentActivity() {
 
@@ -125,6 +126,20 @@ fun MainTabs(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
+    // 自动同步：已登录坚果云且同步间隔 >0 时，启动时拉取一次并按间隔循环拉取
+    val syncCtx = LocalContext.current
+    LaunchedEffect(Unit) {
+        val prov = NutsCloudProvider(syncCtx)
+        if (!prov.isConfigured()) return@LaunchedEffect
+        val mgr = SyncManager(syncCtx, repository, aiPrefs, prov)
+        while (true) {
+            val h = settings.syncIntervalHours
+            if (h <= 0) return@LaunchedEffect
+            mgr.pullFromCloud()
+            delay(h * 60L * 60L * 1000L)
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = true,
@@ -132,32 +147,15 @@ fun MainTabs(
             ModalDrawerSheet(
                 modifier = Modifier.width(280.dp)
             ) {
-                // 顶部：头像占位符 + 登录按钮
-                Column(
+                // 顶部：云端登录区（坚果云 WebDAV，阿里/百度预留）
+                CloudLoginSection(
+                    context = LocalContext.current,
+                    repository = repository,
+                    aiPrefs = aiPrefs,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(64.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("?",
-                            fontSize = 28.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick = { /* 登录功能预留 */ },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("登录")
-                    }
-                }
+                )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
@@ -397,7 +395,7 @@ fun MainTabs(
 
     // 设置弹窗
     if (showSettings) {
-        SettingsSheet(settings = settings, onDismiss = { showSettings = false })
+        SettingsSheet(settings = settings, repository = repository, aiPrefs = aiPrefs, onDismiss = { showSettings = false })
     }
 }
 
