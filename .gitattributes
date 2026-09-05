@@ -1,1 +1,5 @@
 dist/*.apk filter=lfs diff=lfs merge=lfs -text
+android/app/src/main/assets/dictionary.db filter=lfs diff=lfs merge=lfs -text
+android/app/src/main/assets/tts/**/*.onnx filter=lfs diff=lfs merge=lfs -text
+android/app/libs/*.aar filter=lfs diff=lfs merge=lfs -text
+tools/data/*.sj filter=lfs diff=lfs merge=lfs -text

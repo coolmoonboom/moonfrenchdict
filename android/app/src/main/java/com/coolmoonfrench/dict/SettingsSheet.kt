@@ -56,22 +56,6 @@ fun SettingsSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
-            // 查词记录：无上限
-            Text(
-                "查词记录：无上限（全部保留）",
-                fontWeight = FontWeight.Medium,
-                fontSize = 15.sp,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-            Text(
-                "已同步到网盘的记录会永久保存。",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
             // ---------- 同步设置 ----------
             Text("同步设置", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.padding(vertical = 4.dp))
 
