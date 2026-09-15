@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Notes
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.filled.Menu
@@ -117,6 +118,7 @@ fun MainTabs(
     var showSettings by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showGrammar by remember { mutableStateOf(false) }
+    var showGrammarLearn by remember { mutableStateOf(false) }
     var showPronouns by remember { mutableStateOf(false) }
     var showFavorites by remember { mutableStateOf(false) }
     var showAISettings by remember { mutableStateOf(false) }
@@ -182,6 +184,14 @@ fun MainTabs(
                     onClick = {
                         scope.launch { drawerState.close() }
                         showGrammar = true
+                    }
+                )
+                DrawerItem(
+                    icon = Icons.Filled.Book,
+                    label = "语法学习",
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        showGrammarLearn = true
                     }
                 )
                 DrawerItem(
@@ -351,6 +361,16 @@ fun MainTabs(
             color = MaterialTheme.colorScheme.background
         ) {
             GrammarPracticeScreen(onBack = { showGrammar = false })
+        }
+    }
+
+    // 语法学习（词法 / 动词 / 句法，内部自行处理逐级返回）
+    if (showGrammarLearn) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            GrammarScreen(onExit = { showGrammarLearn = false })
         }
     }
 
