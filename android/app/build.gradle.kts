@@ -1,6 +1,8 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.kapt")
 }
 
 android {
@@ -11,8 +13,8 @@ android {
         applicationId = "com.coolmoonfrench.dict"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.0.16"
+        versionCode = 16
+        versionName = "1.0.17"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -37,6 +39,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -60,6 +63,14 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-compose:3.0.4")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation(files("libs/sherpa-onnx-1.13.7.aar"))
+    implementation("androidx.room:room-runtime:2.8.5")
+    implementation("androidx.room:room-ktx:2.8.5")
+    kapt("androidx.room:room-compiler:2.8.5")
+    // Kotlin 2.4.0 生成 metadata 2.4.0，Room compiler 默认依赖的 kotlin-metadata-jvm(2.2.0) 最多只能读 2.3.0，
+    // 必须显式提升 kapt 处理器 classpath 上的版本，否则 kapt 生成 DAO 实现时会崩。
+    kapt("org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.0")
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full-gpl:6.0.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

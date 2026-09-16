@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.VideoLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -126,6 +127,7 @@ fun MainTabs(
     var showAISettings by remember { mutableStateOf(false) }
     var aiRefreshKey by remember { mutableStateOf(0) }
     var showQuestionTypes by remember { mutableStateOf(false) }
+    var showVideoImport by remember { mutableStateOf(false) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -214,6 +216,14 @@ fun MainTabs(
                     onClick = {
                         scope.launch { drawerState.close() }
                         showQuestionTypes = true
+                    }
+                )
+                DrawerItem(
+                    icon = Icons.Filled.VideoLibrary,
+                    label = "视频转文字",
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        showVideoImport = true
                     }
                 )
 
@@ -407,6 +417,16 @@ fun MainTabs(
         }
     }
 
+    // 视频转文字
+    if (showVideoImport) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            VideoImportScreen(onBack = { showVideoImport = false })
+        }
+    }
+
     // 系统返回键处理：二级界面优先关闭，抽屉打开时先关闭抽屉
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
     BackHandler(enabled = showFavorites) { showFavorites = false }
@@ -418,6 +438,7 @@ fun MainTabs(
     BackHandler(enabled = showGrammar) { showGrammar = false }
     BackHandler(enabled = showPronouns) { showPronouns = false }
     BackHandler(enabled = showQuestionTypes) { showQuestionTypes = false }
+    BackHandler(enabled = showVideoImport) { showVideoImport = false }
 
     // 设置弹窗
     if (showSettings) {

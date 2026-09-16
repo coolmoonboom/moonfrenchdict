@@ -72,6 +72,17 @@ Entries discovered by the Agent during task execution should follow this format:
   - 发音引擎 native 链路：libttsmimiccore→libHTSEngine→libpcre2-8→libttsmimic_french→libttsmimic_siwis_fr_zoe_hts→libmimicbridge，bridge 需显式链接全部依赖生成完整 DT_NEEDED。
 
 [Project Knowledge Summary]
+- Date: 2026-09-14
+- Context: Discovered by Agent while setting up the build environment and compiling the project
+- Category: Build Methods / Environment Configuration
+- Instructions:
+  - The sandbox has no JDK / Android SDK / gradle wrapper by default. `gradlew` and `gradle-wrapper.jar` are gitignored and NOT in the repo; use a system Gradle instead of the wrapper.
+  - Build toolchain setup: `apt-get install -y openjdk-17-jdk-headless`; Android cmdline-tools + `platforms;android-36` + `build-tools;36.0.0` installed under `/opt/android-sdk` (accept licenses with `yes | sdkmanager --licenses`); Gradle 9.3.1 downloaded to `/opt/gradle-9.3.1`. `android/local.properties` must contain `sdk.dir=/opt/android-sdk`.
+  - Build command (resource-limited background terminal): `cd /workspace/android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/opt/android-sdk ANDROID_SDK_ROOT=/opt/android-sdk /opt/gradle-9.3.1/bin/gradle :app:assembleDebug --no-daemon`. Tests: `:app:testDebugUnitTest`. Memory budget: `-Xmx2G`, terminal memory_percent 60 (peak ~4.1G).
+  - Large assets are Git LFS tracked: `android/app/libs/*.aar`, `assets/dictionary.db`, `assets/tts/**/*.onnx`, `tools/data/word.sj`, `dist/*.apk`. Fresh clones contain 133-byte pointers.
+  - `git lfs pull` only restored `sherpa-onnx-1.13.7.aar` and `word.sj` from the LFS remote; `dictionary.db` and the TTS onnx were absent on the LFS server and had to be rebuilt: DB via `python3 tools/build_dict_db.py` (input `tools/data/word.sj`, output `assets/dictionary.db`, ~62MB); TTS model downloaded from sherpa-onnx release `vits-piper-fr_FR-siwis-medium.tar.bz2` and extracted `fr_FR-siwis-medium.onnx` into `assets/tts/fr_FR-siwis-medium/`.
+
+[Project Knowledge Summary]
 - Date: 2026-08-30
 - Context: Discovered by Agent while fixing AI 回复 Markdown 表格/引用块渲染为原始文本
 - Category: Troubleshooting & Debugging
@@ -80,3 +91,13 @@ Entries discovered by the Agent during task execution should follow this format:
   - 引用块 `>` 行后若无空行直接接普通文本，后续内容会被 lazy continuation 吞入引用块，导致 `>` 与 `|` 同时以原始文本显示。
   - 修复策略：AIClient 的 system prompt 强制 AI 输出规范 GFM；渲染前用 `MarkdownSanitizer.sanitize()` 容错（补分隔行、引用块后补空行），在 AIScreen.kt 和 AIFavoriteDetailScreen.kt 调用。
   - SentenceScreen 的 AI 逐词结果区在 `analysis == null` 时因 `return@Column` 不渲染，导致必须先点"翻译并分析"才能看到 AI 结果；现条件改为 result/aiWords/aiError/aiLoading 任一非空即渲染，并对 result 相关 item 加 null 保护。
+
+[Project Knowledge Summary]
+- Date: 2026-09-16
+- Context: Discovered by Agent while fixing "换设备后看不到收藏"（云同步）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - `SyncManager`/`NutsCloudProvider` 用 OkHttp 同步调用；在 Compose `LaunchedEffect`（主线程）里直接调用会抛 `NetworkOnMainThreadException`，而 `download()` 内部 catch 后返回 null，导致自动同步静默失效。所有同步网络调用必须放在 `withContext(Dispatchers.IO)`（`SyncUi.runSync` 已是 IO）。
+  - 云同步默认语义应是「合并云端与本地」（并集后回写+上传），不要用覆盖式上传：新设备本机为空时上传会清空云端，导致其他设备随后拉取也变成空。手动「仅上传本机（覆盖云端）」保留为显式破坏性操作。
+  - 收藏三处持久化：单词收藏在 `DictRepository` 的 `favorites` prefs（StringSet），句子收藏与 AI 收藏在 `AIPreferences` 的 `ai_settings` prefs；`SyncData`/`SyncBundle` 四段（history/favorites/sentences/ai_favorites）须全部打包解包。
+

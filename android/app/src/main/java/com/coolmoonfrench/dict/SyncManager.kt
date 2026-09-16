@@ -276,7 +276,7 @@ class SyncManager(
         return id
     }
 
-    private fun appVersion(): String = "1.0.12"
+    private fun appVersion(): String = BuildConfig.VERSION_NAME
 
     // ---------- 本地收集与回写 ----------
 

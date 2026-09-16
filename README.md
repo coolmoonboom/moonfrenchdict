@@ -13,12 +13,14 @@
 - **收藏夹**：本地收藏单词/句子，支持笔记编辑
 - **AI 助手**：内置对话界面（需自备 API Key 配置），支持历史会话、导出分享
 - **OCR 识别**：图片文字识别基于 Google ML Kit，离线可用
+- **视频转文字**：选择本地法语视频，ffmpeg 提取音频后由 Vosk 离线识别，结果保存到本地记录（内置小模型即开即用，可下载高精度大模型）
 
 ## 技术栈
 
 - Kotlin + Jetpack Compose（Material 3）
 - Room / SQLite 本地存储
 - Google ML Kit（文字识别）
+- Vosk（视频离线语音识别）+ FFmpegKit（音频提取）
 - OkHttp（联网翻译与 AI 请求）
 - PDFBox（收藏导出）
 - 离线词典数据内置（`assets/`）
@@ -55,6 +57,10 @@ android/
 │   ├── SentenceScreen.kt                        # 句子分析
 │   ├── GrammarPracticeScreen.kt                 # 语法练习
 │   ├── AIScreen.kt                              # AI 助手
+│   ├── VideoImportScreen.kt                     # 视频转文字
+│   ├── VoskModelManager.kt                      # Vosk 模型管理（内置/下载）
+│   ├── VideoToText.kt                           # ffmpeg + Vosk 识别管线
+│   ├── room/                                    # Room 本地记录
 │   └── ...                                      # 其余功能模块
 ├── app/src/main/assets/                         # 离线词典数据
 └── app/src/test/                                # 单元测试
