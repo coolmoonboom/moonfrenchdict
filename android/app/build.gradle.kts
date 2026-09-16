@@ -70,6 +70,9 @@ dependencies {
     // 必须显式提升 kapt 处理器 classpath 上的版本，否则 kapt 生成 DAO 实现时会崩。
     kapt("org.jetbrains.kotlin:kotlin-metadata-jvm:2.4.0")
     implementation("com.alphacephei:vosk-android:0.3.47")
+    // ffmpeg-kit-maintained 6.0.3 AAR 未声明传递依赖，但 FFmpegKitConfig 引用了 smart-exception-java 的 Exceptions 类，
+    // 必须显式声明，否则运行时 NoClassDefFoundError。
+    implementation("com.arthenica:smart-exception-java:0.2.1")
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full-gpl:6.0.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
