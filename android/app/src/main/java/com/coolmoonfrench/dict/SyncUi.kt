@@ -209,16 +209,16 @@ fun SyncActions(
     }
 
     Button(
+        onClick = { runSync({ manager.mergeCloudAndLocal() }, "同步完成", "同步失败") },
+        enabled = !busy,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+    ) { Text("立即同步（云端与本机合并）") }
+
+    OutlinedButton(
         onClick = { runSync({ manager.pushToCloud() }, "已上传到云端", "上传失败") },
         enabled = !busy,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-    ) { Text("立即同步（上传到云端）") }
-
-    Button(
-        onClick = { runSync({ manager.mergeCloudAndLocal() }, "合并完成", "合并失败") },
-        enabled = !busy,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-    ) { Text("合并云端与本地") }
+    ) { Text("仅上传本机（覆盖云端）") }
 
     OutlinedButton(
         onClick = { runSync({ manager.rollbackToLastSnapshot() }, "已回滚到上一个版本", "无可回滚的版本") },

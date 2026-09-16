@@ -80,14 +80,10 @@ fun SidebarFavoritesScreen(
 private fun AIFavoritesTab(prefs: AIPreferences, onOpen: (Long) -> Unit) {
     val context = LocalContext.current
     var favorites by remember { mutableStateOf(prefs.loadAIFavorites()) }
-    var refresh by remember { mutableStateOf(0) }
 
     fun reload() {
         favorites = prefs.loadAIFavorites()
-        refresh++
     }
-
-    LaunchedEffect(refresh) { reload() }
 
     if (favorites.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -153,7 +149,6 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
     var sentenceFavs by remember { mutableStateOf(prefs.loadSentenceFavorites()) }
-    var refresh by remember { mutableStateOf(0) }
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
@@ -163,10 +158,7 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
     fun reload() {
         wordFavs = repository.loadFavorites()
         sentenceFavs = prefs.loadSentenceFavorites()
-        refresh++
     }
-
-    LaunchedEffect(refresh) { reload() }
 
     val hasWords = wordFavs.isNotEmpty()
     val hasSentences = sentenceFavs.isNotEmpty()

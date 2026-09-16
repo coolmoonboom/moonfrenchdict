@@ -22,8 +22,10 @@ import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TextFields
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -128,17 +130,21 @@ fun MainTabs(
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
 
-    // 自动同步：已登录坚果云且同步间隔 >0 时，启动时拉取一次并按间隔循环拉取
+    // 自动同步：开启同步间隔且已登录时按间隔合并云端与本地（登录/开启后无需重启即可生效）
     val syncCtx = LocalContext.current
     LaunchedEffect(Unit) {
         val prov = NutsCloudProvider(syncCtx)
-        if (!prov.isConfigured()) return@LaunchedEffect
         val mgr = SyncManager(syncCtx, repository, aiPrefs, prov)
         while (true) {
             val h = settings.syncIntervalHours
-            if (h <= 0) return@LaunchedEffect
-            mgr.pullFromCloud()
-            delay(h * 60L * 60L * 1000L)
+            if (h > 0 && prov.isConfigured()) {
+                // 网络与打包必须在 IO 线程执行，主线程调用会触发 NetworkOnMainThreadException
+                withContext(Dispatchers.IO) { mgr.mergeCloudAndLocal() }
+                delay(h * 60L * 60L * 1000L)
+            } else {
+                // 未开启自动同步或未登录：每分钟检查一次，登录/开启后即可开始同步
+                delay(60L * 1000L)
+            }
         }
     }
 

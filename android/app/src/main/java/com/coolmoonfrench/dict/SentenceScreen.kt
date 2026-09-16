@@ -22,7 +22,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -96,12 +98,35 @@ fun SentenceScreen(
     var aiWords by remember { mutableStateOf<List<AIWordMeaning>?>(null) }
     var aiLoading by remember { mutableStateOf(false) }
     var aiError by remember { mutableStateOf<String?>(null) }
+    var zhToFr by remember { mutableStateOf<MyMemoryTranslator.TranslateResult?>(null) }
+    var zhTranslating by remember { mutableStateOf(false) }
+    var zhError by remember { mutableStateOf<String?>(null) }
+    var searchSentence by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
         Espeak.ensureInitialized(context)
+    }
+
+    /** 对已确定是法语的句子执行原有分析流程（逐词分析 + 整句中文翻译） */
+    suspend fun analyzeFrench(fr: String) {
+        try {
+            val result = analyzer.analyze(fr)
+            analysis = result
+            val trans = translator.translate(fr)
+            sentenceTranslation = trans?.translatedText
+            if (trans == null) {
+                analyzeError = "整句翻译失败，请检查网络后重试"
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            analyzeError = "分析失败：${e.message?.take(120) ?: "未知错误"}"
+        } finally {
+            analyzing = false
+        }
     }
 
     fun doAnalyze(s: String) {
@@ -113,28 +138,42 @@ fun SentenceScreen(
             aiError = null
             analyzeError = null
             analyzing = false
+            searchSentence = ""
+            zhToFr = null
+            zhTranslating = false
+            zhError = null
             return
         }
         aiWords = null
         aiError = null
         analyzeError = null
+        zhError = null
         analyzing = true
-        scope.launch {
-            try {
-                val result = analyzer.analyze(s)
-                analysis = result
-                val trans = translator.translate(s)
-                sentenceTranslation = trans?.translatedText
-                if (trans == null) {
-                    analyzeError = "整句翻译失败，请检查网络后重试"
+        if (hasChinese(s)) {
+            // 中文输入：先翻译成法语，再按原有流程分析
+            zhToFr = null
+            zhTranslating = true
+            searchSentence = ""
+            scope.launch {
+                val res = TranslationAssist.zhToFr(s.trim(), aiPrefs, translator)
+                val fr = res?.translatedText?.trim()
+                withContext(Dispatchers.Main) {
+                    zhTranslating = false
+                    zhToFr = res
+                    if (res == null) zhError = "中文翻译法语失败，请检查网络或 AI 配置"
+                    searchSentence = fr.orEmpty()
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                analyzeError = "分析失败：${e.message?.take(120) ?: "未知错误"}"
-            } finally {
-                analyzing = false
+                if (!fr.isNullOrBlank()) {
+                    analyzeFrench(fr)
+                } else {
+                    analyzing = false
+                }
             }
+        } else {
+            zhToFr = null
+            zhTranslating = false
+            searchSentence = s
+            scope.launch { analyzeFrench(s) }
         }
     }
 
@@ -171,8 +210,10 @@ fun SentenceScreen(
         }
     }
 
-    LaunchedEffect(sentence) {
-        favorited = aiPrefs?.isSentenceFavorite(sentence) ?: false
+    LaunchedEffect(searchSentence) {
+        favorited = if (searchSentence.isNotBlank()) {
+            aiPrefs?.isSentenceFavorite(searchSentence) ?: false
+        } else false
     }
 
     // 恢复配置变化前已分析的句子
@@ -187,7 +228,7 @@ fun SentenceScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            placeholder = { Text("输入法语句子") },
+            placeholder = { Text("输入法语句子或中文") },
             maxLines = 3
         )
         Row(
@@ -202,7 +243,7 @@ fun SentenceScreen(
                 Text(if (analyzing) "分析中…" else "翻译并分析")
             }
             OutlinedButton(
-                onClick = { doAIAnalyze(sentence) },
+                onClick = { doAIAnalyze(searchSentence.ifBlank { sentence }) },
                 modifier = Modifier.weight(1f),
                 enabled = !aiLoading
             ) {
@@ -212,7 +253,7 @@ fun SentenceScreen(
                 IconButton(
                     onClick = {
                         Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, sentence)
+                                        Espeak.speakWithFeedback(context, searchSentence.ifBlank { sentence })
                     },
                     modifier = Modifier.size(44.dp)
                 ) {
@@ -239,13 +280,76 @@ fun SentenceScreen(
         }
 
         val result = analysis
-        if (result == null && aiWords == null && aiError == null && analyzeError == null && !aiLoading) return@Column
+        if (result == null && aiWords == null && aiError == null && analyzeError == null && !aiLoading && zhToFr == null && !zhTranslating) return@Column
 
         SelectionContainer {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp)
             ) {
+            // 中文 → 法语翻译结果（仅中文输入时出现）
+            if (zhTranslating) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("正在翻译为法语…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    }
+                }
+            } else if (zhToFr != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("中文 → 法语", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "来源: ${zhToFr!!.source}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp
+                                )
+                                Spacer(Modifier.weight(1f))
+                                IconButton(
+                                    onClick = {
+                                        Espeak.ensureInitialized(context)
+                                        Espeak.speakWithFeedback(context, zhToFr!!.translatedText)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = "朗读法语译文",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                zhToFr!!.translatedText,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
+                }
+            } else if (zhError != null) {
+                item {
+                    Text(
+                        zhError!!,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp
+                    )
+                }
+            }
             // 分析错误提示
             if (analyzeError != null) {
                 item {
@@ -273,10 +377,10 @@ fun SentenceScreen(
                                 if (aiPrefs != null) {
                                     IconButton(onClick = {
                                         if (favorited) {
-                                            aiPrefs.removeSentenceFavorite(sentence)
+                                            aiPrefs.removeSentenceFavorite(searchSentence)
                                             favorited = false
                                         } else {
-                                            aiPrefs.addSentenceFavorite(sentence, sentenceTranslation ?: "")
+                                            aiPrefs.addSentenceFavorite(searchSentence, sentenceTranslation ?: "")
                                             favorited = true
                                         }
                                     }) {

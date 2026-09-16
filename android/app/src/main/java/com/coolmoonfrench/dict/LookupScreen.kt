@@ -48,7 +48,13 @@ fun LookupScreen(
     var loading by remember { mutableStateOf(false) }
     var translateError by remember { mutableStateOf<String?>(null) }
     var expansion by remember { mutableStateOf<String?>(null) }
-var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
+    var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
+    // 中文输入：翻译成法语后的结果与状态
+    var zhToFr by remember { mutableStateOf<MyMemoryTranslator.TranslateResult?>(null) }
+    var zhTranslating by remember { mutableStateOf(false) }
+    var zhError by remember { mutableStateOf<String?>(null) }
+    // 实际用于法语查询的词（中文输入时为翻译结果，法语输入时即输入本身）
+    var frenchTerm by remember { mutableStateOf("") }
     var favoriteWords by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -61,6 +67,43 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     // 防抖：每次输入取消上一次未完成的搜索，避免卡顿
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
+    /** 用已确定是法语的词执行原有查询流程（精确匹配 / 近似 / 词根 / 派生 / 拆解） */
+    suspend fun searchFrench(fr: String) {
+        val exact = withContext(Dispatchers.IO) { repository.lookupExact(fr) }
+        if (exact.isNotEmpty()) {
+            withContext(Dispatchers.IO) { repository.addHistory(fr) }
+            val first = exact.first()
+            val verb = withContext(Dispatchers.IO) { conjugator.isVerb(first.word) }
+            // 近似词/词根词/词形分析均走后台
+            val sim = withContext(Dispatchers.IO) { repository.similarWords(fr) }
+            val rel = withContext(Dispatchers.IO) { repository.relatedWords(fr) }
+            val der = withContext(Dispatchers.IO) { repository.derivedWords(fr) }
+            val bd = withContext(Dispatchers.IO) { morphology.analyze(fr, repository) }
+            withContext(Dispatchers.Main) {
+                selected = first
+                expansion = if (verb) "动词原形：${first.word}" else null
+                similar = sim
+                related = rel
+                derived = der
+                breakdown = bd
+            }
+        } else {
+            val sim = withContext(Dispatchers.IO) { repository.similarWords(fr) }
+            val rel = withContext(Dispatchers.IO) { repository.relatedWords(fr) }
+            val der = withContext(Dispatchers.IO) { repository.derivedWords(fr) }
+            val bd = withContext(Dispatchers.IO) { morphology.analyze(fr, repository) }
+            val verb = withContext(Dispatchers.IO) { conjugator.isVerb(fr) }
+            withContext(Dispatchers.Main) {
+                selected = null
+                similar = sim
+                related = rel
+                derived = der
+                breakdown = bd
+                expansion = if (verb) "动词原形：$fr" else null
+            }
+        }
+    }
+
     fun doSearch(q: String) {
         query = q
         onlineResult = null
@@ -68,51 +111,39 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
         breakdown = null
         loading = false
         translateError = null
+        zhError = null
         searchJob?.cancel()
         if (q.isBlank()) {
             selected = null
             similar = emptyList()
             related = emptyList()
             derived = emptyList()
+            frenchTerm = ""
+            zhToFr = null
+            zhTranslating = false
             return
         }
-        searchJob = scope.launch {
-            // 后台线程执行全部查询，避免阻塞 UI
-            val exact = withContext(Dispatchers.IO) { repository.lookupExact(q) }
-            if (exact.isNotEmpty()) {
-                withContext(Dispatchers.IO) { repository.addHistory(q) }
-                val first = exact.first()
-                val verb = withContext(Dispatchers.IO) { conjugator.isVerb(first.word) }
+        if (hasChinese(q)) {
+            // 中文输入：先翻译成法语，再按原有流程查询法语结果
+            frenchTerm = ""
+            zhToFr = null
+            zhTranslating = true
+            searchJob = scope.launch {
+                val res = TranslationAssist.zhToFr(q.trim(), aiPrefs, translator)
+                val fr = res?.translatedText?.trim()
                 withContext(Dispatchers.Main) {
-                    selected = first
-                    expansion = if (verb) "动词原形：${first.word}" else null
+                    zhTranslating = false
+                    zhToFr = res
+                    frenchTerm = fr.orEmpty()
+                    if (res == null) zhError = "中文翻译法语失败，请检查网络或 AI 配置"
                 }
-                // 近似词/词根词/词形分析均走后台
-                val sim = withContext(Dispatchers.IO) { repository.similarWords(q) }
-                val rel = withContext(Dispatchers.IO) { repository.relatedWords(q) }
-                val der = withContext(Dispatchers.IO) { repository.derivedWords(q) }
-                val bd = withContext(Dispatchers.IO) { morphology.analyze(q, repository) }
-                withContext(Dispatchers.Main) {
-                    similar = sim
-                    related = rel
-                    derived = der
-                    breakdown = bd
-                }
-            } else {
-                val sim = withContext(Dispatchers.IO) { repository.similarWords(q) }
-                val rel = withContext(Dispatchers.IO) { repository.relatedWords(q) }
-                val der = withContext(Dispatchers.IO) { repository.derivedWords(q) }
-                val bd = withContext(Dispatchers.IO) { morphology.analyze(q, repository) }
-                val verb = withContext(Dispatchers.IO) { conjugator.isVerb(q) }
-                withContext(Dispatchers.Main) {
-                    selected = null
-                    similar = sim
-                    related = rel
-                    derived = der
-                    breakdown = bd
-                    expansion = if (verb) "动词原形：$q" else null
-                }
+                if (!fr.isNullOrBlank()) searchFrench(fr)
             }
+        } else {
+            zhToFr = null
+            zhTranslating = false
+            frenchTerm = q.trim()
+            searchJob = scope.launch { searchFrench(q) }
         }
     }
 
@@ -123,9 +154,9 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     }
 
     // 无精确匹配时的前缀建议：异步加载，避免阻塞 UI
-    LaunchedEffect(query) {
-        val q = query.trim()
-        if (q.isBlank() || selected != null) {
+    LaunchedEffect(frenchTerm) {
+        val q = frenchTerm.trim()
+        if (q.isBlank() || hasChinese(q) || selected != null) {
             prefixSuggestions = emptyList()
             return@LaunchedEffect
         }
@@ -148,7 +179,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            placeholder = { Text("输入法语单词") },
+            placeholder = { Text("输入法语单词或中文") },
             singleLine = true,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -161,6 +192,74 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 12.dp)
             ) {
+                // 中文 → 法语翻译结果（仅中文输入时出现）
+                if (zhTranslating) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("正在翻译为法语…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                        }
+                    }
+                } else if (zhToFr != null) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("中文 → 法语", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "来源: ${zhToFr!!.source}",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 11.sp
+                                    )
+                                    Spacer(Modifier.weight(1f))
+                                    IconButton(
+                                        onClick = {
+                                            Espeak.ensureInitialized(context)
+                                            Espeak.speakWithFeedback(context, zhToFr!!.translatedText)
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.VolumeUp,
+                                            contentDescription = "朗读法语译文",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    zhToFr!!.translatedText,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                        }
+                    }
+                } else if (zhError != null) {
+                    item {
+                        Text(
+                            zhError!!,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+
                 // 主词条
                 if (selected != null) {
                     val entry = selected!!
@@ -420,7 +519,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                         ) {
                             items(similar) { e ->
                                 Card(
-                                    onClick = { selected = e; query = e.word; expansion = null; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
+                                    onClick = { selected = e; query = e.word; frenchTerm = e.word; zhToFr = null; expansion = null; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                                     )
@@ -464,7 +563,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                         ) {
                             items(related) { e ->
                                 Card(
-                                    onClick = { selected = e; query = e.word; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
+                                    onClick = { selected = e; query = e.word; frenchTerm = e.word; zhToFr = null; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.secondaryContainer
                                     )
@@ -508,7 +607,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                         ) {
                             items(derived) { e ->
                                 Card(
-                                    onClick = { selected = e; query = e.word; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
+                                    onClick = { selected = e; query = e.word; frenchTerm = e.word; zhToFr = null; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                                     )
@@ -535,7 +634,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                 }
 
                 // 无精确匹配时的建议列表
-                if (selected == null && query.isNotBlank() && similar.isEmpty() && related.isEmpty() && derived.isEmpty()) {
+                if (selected == null && frenchTerm.isNotBlank() && similar.isEmpty() && related.isEmpty() && derived.isEmpty()) {
                     if (prefixSuggestions.isNotEmpty()) {
                         item {
                             Text(
@@ -551,6 +650,8 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                 onClick = {
                                     selected = entry
                                     query = entry.word
+                                    frenchTerm = entry.word
+                                    zhToFr = null
                                     onlineResult = null
                                     searchJob?.cancel()
                                     searchJob = scope.launch {
@@ -596,11 +697,11 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text("未找到匹配，正在尝试联网释义…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(Modifier.height(8.dp))
-                                    LaunchedEffect(query) {
+                                    LaunchedEffect(frenchTerm) {
                                         loading = true
                                         translateError = null
                                         try {
-                                            val en = translator.translate(query, "fr|en")
+                                            val en = translator.translate(frenchTerm, "fr|en")
                                             if (en != null) {
                                                 onlineResult = translator.translate(en.translatedText, "en|zh-CN")
                                             }
@@ -650,7 +751,7 @@ var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
                                             translateError = null
                                             scope.launch {
                                                 try {
-                                                    val en = translator.translate(query, "fr|en")
+                                                    val en = translator.translate(frenchTerm, "fr|en")
                                                     if (en != null) {
                                                         onlineResult = translator.translate(en.translatedText, "en|zh-CN")
                                                     }
