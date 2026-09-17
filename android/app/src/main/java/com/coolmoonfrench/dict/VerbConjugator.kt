@@ -166,7 +166,7 @@ class VerbConjugator {
             "conduire", "produire", "construire", "traduire", "réduire", "détruire",
             "craindre", "peindre", "éteindre", "joindre", "plaindre", "vaincre",
             "battre", "valoir", "pleuvoir", "falloir", "savoir", "devoir",
-            "pouvoir", "vouloir", "recevoir", "apercevoir", "taire"
+            "pouvoir", "vouloir", "recevoir", "apercevoir", "taire", "rompre"
         )
         if (w in irregularRe) return false
         for (s in listOf("aindre", "eindre", "oindre", "oudre")) {
@@ -446,7 +446,7 @@ private fun loadIrregularVerbs(): Map<String, IrregularVerb> {
     for (e in venirData) {
         val w = e.word; val st1 = e.stem1; val nous = e.nous; val nousStem = e.nousStem
         val aux = e.auxiliary; val pp = e.participePasse
-        put3(w, listOf("${st1}s", "${st1}s", "${st1}t", nous, "${nousStem}ez", "${st1}ent"),
+        put3(w, listOf("${st1}s", "${st1}s", "${st1}t", nous, "${nousStem}ez", "${st1}nent"),
             aux, pp,
             imp = listOf("${nousStem}ais", "${nousStem}ais", "${nousStem}ait", "${nousStem}ions", "${nousStem}iez", "${nousStem}aient"),
             futureStem = w.dropLast(1),
@@ -497,7 +497,7 @@ private fun loadIrregularVerbs(): Map<String, IrregularVerb> {
         impImp = listOf("lis", "lisons", "lisez"), pPresent = "lisant")
     for (w in listOf("écrire", "décrire")) {
         val st = if (w == "écrire") "écriv" else "décriv"
-        put3(w, listOf("${st.dropLast(1)}is", "${st.dropLast(1)}is", "${st.dropLast(1)}it", "${st}ons", "${st}ez", "${st}ent"),
+        put3(w, listOf("${st.dropLast(1)}s", "${st.dropLast(1)}s", "${st.dropLast(1)}t", "${st}ons", "${st}ez", "${st}ent"),
             "avoir", if (w == "écrire") "écrit" else "décrit",
             futureStem = w.dropLast(1),
             pSimple = listOf("${st}is", "${st}is", "${st}it", "${st}îmes", "${st}îtes", "${st}irent"),
@@ -598,8 +598,8 @@ private fun loadIrregularVerbs(): Map<String, IrregularVerb> {
         "conduire" to "conduis", "produire" to "produis", "construire" to "construis",
         "traduire" to "traduis", "réduire" to "réduis", "détruire" to "détruis"
     )) {
-        put3(w, listOf("${st}", "${st}", "${st}t", "${st}ons", "${st}ez", "${st}ent"),
-            "avoir", "${st}it",
+        put3(w, listOf("${st}", "${st}", "${st.dropLast(1)}t", "${st}ons", "${st}ez", "${st}ent"),
+            "avoir", "${st.dropLast(1)}t",
             futureStem = w.dropLast(1),
             pSimple = listOf("${st}is", "${st}is", "${st}it", "${st}îmes", "${st}îtes", "${st}irent"),
             subj = listOf("${st}e", "${st}es", "${st}e", "${st}ions", "${st}iez", "${st}ent"),
@@ -611,13 +611,14 @@ private fun loadIrregularVerbs(): Map<String, IrregularVerb> {
         "craindre" to "crain", "peindre" to "pein", "éteindre" to "étein",
         "joindre" to "join", "plaindre" to "plain"
     )) {
-        put3(w, listOf("${st}s", "${st}s", "${st}t", "${st}gnons", "${st}gnez", "${st}gnent"),
+        val gn = st.dropLast(1)
+        put3(w, listOf("${st}s", "${st}s", "${st}t", "${gn}gnons", "${gn}gnez", "${gn}gnent"),
             "avoir", "${st}t",
-            imp = listOf("${st}gnais", "${st}gnais", "${st}gnait", "${st}gnions", "${st}gniez", "${st}gnaient"),
+            imp = listOf("${gn}gnais", "${gn}gnais", "${gn}gnait", "${gn}gnions", "${gn}gniez", "${gn}gnaient"),
             futureStem = w.dropLast(1),
-            pSimple = listOf("${st}gnis", "${st}gnis", "${st}gnit", "${st}gnîmes", "${st}gnîtes", "${st}gnirent"),
-            subj = listOf("${st}gne", "${st}gnes", "${st}gne", "${st}gnions", "${st}gniez", "${st}gnent"),
-            impImp = listOf("${st}s", "${st}gnons", "${st}gnez"), pPresent = "${st}gnant")
+            pSimple = listOf("${gn}gnis", "${gn}gnis", "${gn}gnit", "${gn}gnîmes", "${gn}gnîtes", "${gn}gnirent"),
+            subj = listOf("${gn}gne", "${gn}gnes", "${gn}gne", "${gn}gnions", "${gn}gniez", "${gn}gnent"),
+            impImp = listOf("${st}s", "${gn}gnons", "${gn}gnez"), pPresent = "${gn}gnant")
     }
 
     // === vaincre ===
@@ -683,6 +684,13 @@ private fun loadIrregularVerbs(): Map<String, IrregularVerb> {
         pSimple = listOf("battis", "battis", "battit", "battîmes", "battîtes", "battirent"),
         subj = listOf("batte", "battes", "batte", "battions", "battiez", "battent"),
         impImp = listOf("bats", "battons", "battez"), pPresent = "battant")
+
+    // === rompre（vendre 型，但第三人称保留 t） ===
+    put3("rompre", listOf("romps", "romps", "rompt", "rompons", "rompez", "rompent"), "avoir", "rompu",
+        futureStem = "rompr",
+        pSimple = listOf("rompis", "rompis", "rompit", "rompîmes", "rompîtes", "rompirent"),
+        subj = listOf("rompe", "rompes", "rompe", "rompions", "rompiez", "rompent"),
+        impImp = listOf("romps", "rompons", "rompez"), pPresent = "rompant")
 
     // === envoyer ===
     put3("envoyer", listOf("envoie", "envoies", "envoie", "envoyons", "envoyez", "envoient"), "avoir", "envoyé",

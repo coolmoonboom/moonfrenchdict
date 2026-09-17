@@ -76,7 +76,7 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
                 fontWeight = FontWeight.Bold
             )
             Text(
-                "最复杂的一组，多为高频动词，需逐一记忆。点击词族可查看全部动词。",
+                "多数第三组动词可按词尾归入规律族：-dre 规则型、-ttre、-tir/-mir/-vir、-vrir/-frir、-enir、-indre、-uire、-aître、-oir 等，同一规律族的动词变位相同。仅 être/avoir/aller/faire 等少数需逐一记忆。点击词族可查看全部动词。",
                 modifier = Modifier.padding(horizontal = 12.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp

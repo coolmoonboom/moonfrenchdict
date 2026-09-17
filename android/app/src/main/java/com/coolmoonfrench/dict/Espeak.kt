@@ -63,6 +63,9 @@ object Espeak {
 
     private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var playbackJob: Job? = null
+
+    /** 保护 audioTrack 及其生命周期操作（创建/play/write/release/stop）的锁。 */
+    private val trackLock = Any()
     private var audioTrack: AudioTrack? = null
 
     fun setSpeechRate(v: Float) {
@@ -179,7 +182,8 @@ object Espeak {
     /** 用 Piper 引擎合成，返回 22050Hz 16bit 单声道 PCM 字节流 */
     private fun synthesizePcm(text: String, speed: Float): ByteArray? {
         val engine = tts ?: return null
-        val samples = engine.generate(text, 0, speed).samples
+        val safeText = sanitizeForTts(text)
+        val samples = engine.generate(safeText, 0, speed).samples
         if (samples.isEmpty()) return null
         // float[] -> 16bit PCM
         val bytes = ByteArray(samples.size * 2)
@@ -190,6 +194,29 @@ object Espeak {
             bytes[i++] = ((v shr 8) and 0xFF).toByte()
         }
         return bytes
+    }
+
+    /**
+     * 清洗送入 TTS 引擎的文本，避免 espeak-ng 遇到非常用 Unicode 字符（如箭头 →、表情符号、
+     * 特殊框线等）时在原生层触发异常导致闪退。只保留法语音素化需要的字符：
+     * 字母（含拉丁扩展）、数字、空白、常见标点与法语引号。
+     */
+    private fun sanitizeForTts(text: String): String {
+        val sb = StringBuilder(text.length)
+        for (ch in text) {
+            if (ch.isLetterOrDigit() || ch.isWhitespace() ||
+                ch == '.' || ch == ',' || ch == '!' || ch == '?' ||
+                ch == ';' || ch == ':' || ch == '\'' || ch == '-' || ch == '_' ||
+                ch == '«' || ch == '»' || ch == '"' || ch == '(' || ch == ')' ||
+                ch == '[' || ch == ']' || ch == '/' || ch == '&' || ch == '%'
+            ) {
+                sb.append(ch)
+            } else if (sb.isNotEmpty() && sb.last() != ' ') {
+                // 其它字符统一替换为空格，避免连续空格堆积
+                sb.append(' ')
+            }
+        }
+        return sb.toString().trim()
     }
 
     /**
@@ -300,16 +327,17 @@ object Espeak {
     fun stop() {
         playbackJob?.cancel()
         playbackJob = null
-
-        val track = audioTrack ?: return
-        audioTrack = null
-        runCatching {
-            if (track.playState != AudioTrack.PLAYSTATE_STOPPED) {
-                track.stop()
-            }
-        }
-        track.release()
+        releaseTrack()
         playing = false
+    }
+
+    /** 在锁内安全释放并清空当前 AudioTrack（幂等，可多次调用）。 */
+    private fun releaseTrack() {
+        synchronized(trackLock) {
+            val track = audioTrack ?: return
+            audioTrack = null
+            stopAndRelease(track)
+        }
     }
 
     private fun buildAudioTrack(bufferSizeBytes: Int): AudioTrack =
@@ -331,10 +359,25 @@ object Espeak {
             .setBufferSizeInBytes(bufferSizeBytes)
             .build()
 
+    /** 停止并释放一个 AudioTrack（幂等）。调用方需已持有 trackLock。可传入 null。 */
+    private fun stopAndRelease(track: AudioTrack?) {
+        if (track == null) return
+        runCatching {
+            if (track.playState != AudioTrack.PLAYSTATE_STOPPED) {
+                track.stop()
+            }
+        }
+        runCatching {
+            track.release()
+        }
+    }
+
     /**
      * 分块写入 PCM 并排空播放（协程内执行，可被取消）。
      * 采用 MODE_STREAM：每写一块后若未在播放则 play()，由系统按 buffer 节奏消费；
      * 排空阶段按播放头位置轮询，直到播完或被取消。
+     * 线程安全：所有 AudioTrack 生命周期操作（write/play/drain/stop/release）都在
+     * trackLock 保护下进行，stop() 只会释放一次，杜绝双释放/use-after-release 崩溃。
      */
     private suspend fun playPcm(bytes: ByteArray, onError: ((String) -> Unit)? = null) {
         val minBuf = AudioTrack.getMinBufferSize(
@@ -348,15 +391,23 @@ object Espeak {
             onError?.invoke(msg)
             return
         }
-        val track = buildAudioTrack(maxOf(minBuf, bytes.size))
-        audioTrack = track
+        val track = synchronized(trackLock) {
+            // 若上一个 track 尚未释放（异常路径残留），先清理，避免叠加
+            stopAndRelease(audioTrack)
+            buildAudioTrack(maxOf(minBuf, bytes.size)).also { audioTrack = it }
+        }
         try {
             var written = 0
             val chunkSize = 4096
             while (written < bytes.size) {
                 currentCoroutineContext().ensureActive()
+                // 被 stop() 抢占释放后，audioTrack 已不是本 track，立即退出，避免操作已释放对象
+                if (!isCurrentTrack(track)) return
                 val len = minOf(chunkSize, bytes.size - written)
-                val n = track.write(bytes, written, len, AudioTrack.WRITE_BLOCKING)
+                val n = synchronized(trackLock) {
+                    if (!isCurrentTrack(track)) return@synchronized 0
+                    track.write(bytes, written, len, AudioTrack.WRITE_BLOCKING)
+                }
                 if (n <= 0) {
                     val msg = "AudioTrack 写入中断(written=$written/$n)"
                     lastError = msg
@@ -364,17 +415,26 @@ object Espeak {
                     return
                 }
                 written += n
-                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
-                    track.play()
+                synchronized(trackLock) {
+                    if (isCurrentTrack(track) && track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                        track.play()
+                    }
                 }
             }
 
-            // 排空：按播放头完成度判断，期间可被取消
+            // 排空：按播放头完成度判断，期间可被取消；若已被 stop() 释放则退出
             val totalFrames = bytes.size / 2
             val deadline = System.currentTimeMillis() + 60_000L
-            while (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+            while (true) {
                 currentCoroutineContext().ensureActive()
-                if (track.playbackHeadPosition >= totalFrames) break
+                val stillPlaying = synchronized(trackLock) {
+                    isCurrentTrack(track) && track.playState == AudioTrack.PLAYSTATE_PLAYING
+                }
+                if (!stillPlaying) break
+                val headReached = synchronized(trackLock) {
+                    isCurrentTrack(track) && track.playbackHeadPosition >= totalFrames
+                }
+                if (headReached) break
                 if (System.currentTimeMillis() >= deadline) break
                 delay(20)
             }
@@ -386,23 +446,20 @@ object Espeak {
             onError?.invoke(msg)
             Log.e(TAG, "AudioTrack error", e)
         } finally {
-            if (audioTrack === track) {
-                audioTrack = null
-                cleanupTrack(track)
-                playing = false
-            } else {
-                cleanupTrack(track)
+            // 只有当前 track 仍然属于自己时才释放；若已被 stop() 释放则不再碰它（防双释放）
+            val released = synchronized(trackLock) {
+                if (audioTrack === track) {
+                    audioTrack = null
+                    stopAndRelease(track)
+                    true
+                } else {
+                    false
+                }
             }
+            if (released) playing = false
         }
     }
 
-    private fun cleanupTrack(track: AudioTrack?) {
-        if (track == null) return
-        runCatching {
-            if (track.playState != AudioTrack.PLAYSTATE_STOPPED) {
-                track.stop()
-            }
-        }
-        track.release()
-    }
+    /** 判断 audioTrack 是否仍指向指定 track（在锁内或锁外调用均可）。 */
+    private fun isCurrentTrack(track: AudioTrack): Boolean = audioTrack === track
 }

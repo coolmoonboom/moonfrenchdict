@@ -8,9 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -59,19 +56,27 @@ fun SidebarFavoritesScreen(
             Text("收藏", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
 
-        // 双栏 Tab
+        // 四个分类 Tab
         TabRow(selectedTabIndex = tabIndex) {
             Tab(selected = tabIndex == 0, onClick = { tabIndex = 0 }) {
                 Text("AI 收藏", modifier = Modifier.padding(vertical = 12.dp))
             }
             Tab(selected = tabIndex == 1, onClick = { tabIndex = 1 }) {
-                Text("单词·句子·视频", modifier = Modifier.padding(vertical = 12.dp))
+                Text("单词", modifier = Modifier.padding(vertical = 12.dp))
+            }
+            Tab(selected = tabIndex == 2, onClick = { tabIndex = 2 }) {
+                Text("句子", modifier = Modifier.padding(vertical = 12.dp))
+            }
+            Tab(selected = tabIndex == 3, onClick = { tabIndex = 3 }) {
+                Text("视频转文字", modifier = Modifier.padding(vertical = 12.dp))
             }
         }
 
         when (tabIndex) {
             0 -> AIFavoritesTab(prefs, onOpen = { selectedFavId = it })
-            1 -> WordSentenceFavoritesTab(prefs, repository)
+            1 -> WordFavoritesTab(repository)
+            2 -> SentenceFavoritesTab(prefs)
+            3 -> VideoTextFavoritesTab(prefs)
         }
     }
 }
@@ -145,184 +150,127 @@ private fun AIFavoritesTab(prefs: AIPreferences, onOpen: (Long) -> Unit) {
 }
 
 @Composable
-private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepository) {
+private fun WordFavoritesTab(repository: DictRepository) {
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
-    var sentenceFavs by remember { mutableStateOf(prefs.loadSentenceFavorites()) }
-    var videoFavs by remember { mutableStateOf(prefs.loadVideoTextFavorites()) }
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
         Espeak.ensureInitialized(context)
     }
 
-    fun reload() {
-        wordFavs = repository.loadFavorites()
-        sentenceFavs = prefs.loadSentenceFavorites()
-        videoFavs = prefs.loadVideoTextFavorites()
-    }
-
-    val hasWords = wordFavs.isNotEmpty()
-    val hasSentences = sentenceFavs.isNotEmpty()
-    val hasVideoTexts = videoFavs.isNotEmpty()
-
-    if (!hasWords && !hasSentences && !hasVideoTexts) {
+    if (wordFavs.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("暂无收藏。可在查词界面、句子分析或视频转文字中收藏。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
+            Text("暂无单词收藏。可在查词界面点击 ☆ 收藏单词。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
         }
         return
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
     ) {
-        // 视频文字收藏
-        if (hasVideoTexts) {
-            Text(
-                "视频文字收藏",
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            videoFavs.forEach { fav ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+        items(wordFavs) { entry ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(entry.word, fontWeight = FontWeight.Medium, fontSize = 15.sp)
                         Text(
-                            fav.text,
-                            fontSize = 14.sp,
-                            maxLines = 6,
+                            entry.meaning.take(60),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        if (fav.fileName.isNotBlank()) {
-                            Text(
-                                "来源：${fav.fileName}",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            IconButton(onClick = {
-                                val clip = ClipData.newPlainText("video_text", fav.text)
-                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-                            }) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
-                            }
-                            TextButton(onClick = {
-                                prefs.removeVideoTextFavorite(fav.text)
-                                reload()
-                            }) {
-                                Text("移除", fontSize = 12.sp)
-                            }
-                        }
+                    }
+                    IconButton(onClick = {
+                        Espeak.ensureInitialized(context)
+                                    Espeak.speakWithFeedback(context, entry.word)
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读 ${entry.word}", modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(onClick = {
+                        val clip = ClipData.newPlainText("word", "${entry.word}\n${entry.meaning}")
+                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                    }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
+                    }
+                    TextButton(onClick = {
+                        repository.removeFavorite(entry.word)
+                        wordFavs = repository.loadFavorites()
+                    }) {
+                        Text("移除", fontSize = 12.sp)
                     }
                 }
             }
         }
+    }
+}
 
-        // 句子收藏
-        if (hasSentences) {
-            Text(
-                "句子收藏",
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            sentenceFavs.forEach { saved ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Text(saved.sentence, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                        if (saved.translation.isNotBlank()) {
-                            Text(
-                                saved.translation,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            IconButton(onClick = {
-                                Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, saved.sentence)
-                            }) {
-                                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读", modifier = Modifier.size(16.dp))
-                            }
-                            IconButton(onClick = {
-                                val clip = ClipData.newPlainText("sentence", "${saved.sentence}\n${saved.translation}")
-                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-                            }) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
-                            }
-                            TextButton(onClick = {
-                                prefs.removeSentenceFavorite(saved.sentence)
-                                reload()
-                            }) {
-                                Text("移除", fontSize = 12.sp)
-                            }
-                        }
-                    }
-                }
-            }
+@Composable
+private fun SentenceFavoritesTab(prefs: AIPreferences) {
+    val context = LocalContext.current
+    var sentenceFavs by remember { mutableStateOf(prefs.loadSentenceFavorites()) }
+
+    // 预热 Mimic 法语 TTS（幂等，非阻塞）
+    LaunchedEffect(Unit) {
+        Espeak.ensureInitialized(context)
+    }
+
+    if (sentenceFavs.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("暂无句子收藏。可在句子分析界面点击 ☆ 收藏句子。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
         }
+        return
+    }
 
-        // 单词收藏
-        if (hasWords) {
-            Text(
-                "单词收藏",
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).padding(top = 8.dp),
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-            wordFavs.forEach { entry ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)
-                ) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        items(sentenceFavs) { saved ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Text(saved.sentence, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    if (saved.translation.isNotBlank()) {
+                        Text(
+                            saved.translation,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.End
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(entry.word, fontWeight = FontWeight.Medium, fontSize = 15.sp)
-                            Text(
-                                entry.meaning.take(60),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                         IconButton(onClick = {
                             Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, entry.word)
+                                    Espeak.speakWithFeedback(context, saved.sentence)
                         }) {
-                            Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读 ${entry.word}", modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读", modifier = Modifier.size(16.dp))
                         }
                         IconButton(onClick = {
-                            val clip = ClipData.newPlainText("word", "${entry.word}\n${entry.meaning}")
+                            val clip = ClipData.newPlainText("sentence", "${saved.sentence}\n${saved.translation}")
                             (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
                         }) {
                             Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
                         }
                         TextButton(onClick = {
-                            repository.removeFavorite(entry.word)
-                            reload()
+                            prefs.removeSentenceFavorite(saved.sentence)
+                            sentenceFavs = prefs.loadSentenceFavorites()
                         }) {
                             Text("移除", fontSize = 12.sp)
                         }
@@ -330,7 +278,67 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
                 }
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(12.dp))
+@Composable
+private fun VideoTextFavoritesTab(prefs: AIPreferences) {
+    val context = LocalContext.current
+    var videoFavs by remember { mutableStateOf(prefs.loadVideoTextFavorites()) }
+
+    if (videoFavs.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("暂无视频转文字收藏。可在视频转文字识别结果中点击 ☆ 收藏。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        items(videoFavs) { fav ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Text(
+                        fav.text,
+                        fontSize = 14.sp,
+                        maxLines = 6,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (fav.fileName.isNotBlank()) {
+                        Text(
+                            "来源：${fav.fileName}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        IconButton(onClick = {
+                            val clip = ClipData.newPlainText("video_text", fav.text)
+                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                        }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
+                        }
+                        TextButton(onClick = {
+                            prefs.removeVideoTextFavorite(fav.text)
+                            videoFavs = prefs.loadVideoTextFavorites()
+                        }) {
+                            Text("移除", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

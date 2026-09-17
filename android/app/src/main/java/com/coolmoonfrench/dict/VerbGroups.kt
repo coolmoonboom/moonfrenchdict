@@ -65,23 +65,31 @@ object VerbGroups {
     )
 
     val thirdGroupFamilies = listOf(
+        // === 完全无规律 ===
         VerbFamily(
-            "助动词", "最核心的两个助动词，用于构成复合时态。",
+            "助动词", "完全无规律，最核心的两个助动词，用于构成复合时态。",
             listOf("être" to "是；存在", "avoir" to "有；拥有"),
             "je suis / j'ai"
         ),
         VerbFamily(
-            "aller 族", "不规则程度高：je vais / nous allons / j'irai。",
+            "aller 族（-er 不规则）", "以 -er 结尾但属第三组，完全无规律：je vais / nous allons / j'irai。",
             listOf("aller" to "去；走", "s'en aller" to "离开"),
             "je vais / nous allons / j'irai"
         ),
         VerbFamily(
-            "faire 族", "je fais / nous faisons / j'ai fait。",
+            "envoyer（-er 不规则）", "以 -er 结尾但属第三组：现在时词干 envoi-，将来时 enverr-。",
+            listOf("envoyer" to "发送；寄"),
+            "j'envoie / j'enverrai"
+        ),
+        VerbFamily(
+            "faire 族", "je fais / nous faisons / j'ai fait，vous 形式 faites 需注意。",
             listOf("faire" to "做；制造", "refaire" to "重做"),
             "je fais / nous faisons / j'ai fait"
         ),
+
+        // === -oir 类 ===
         VerbFamily(
-            "情态动词类", "词干在单数形式中常发生元音变化。",
+            "-oir 情态动词类", "单数人称词干元音变化（je peux / je veux / je dois / je sais），复数保留词干 + ons/ez。",
             listOf(
                 "pouvoir" to "能够；可以", "vouloir" to "想要；希望",
                 "devoir" to "必须；欠", "savoir" to "知道；会"
@@ -89,103 +97,57 @@ object VerbGroups {
             "je peux / je veux / je dois / je sais"
         ),
         VerbFamily(
-            "venir 族", "venir → je viens / nous venons / je suis venu。",
+            "-oir 词干变化型（voir / recevoir）", "单数 reçois/vois，复数 recevons/voyons，词干在 oi 与 y/ç 间变化。",
+            listOf("voir" to "看见；看", "recevoir" to "收到；接待", "apercevoir" to "察觉；瞥见"),
+            "je vois / nous voyons；je reçois / nous recevons"
+        ),
+        VerbFamily(
+            "-enir 族（venir / tenir 型）", "词干单复数交替：je viens / nous venons / ils viennent；tenir 同型。venir 族用 être 作助动词。",
             listOf(
                 "venir" to "来；到来", "devenir" to "变成；成为",
-                "revenir" to "回来；回复", "souvenir" to "记得；想起（se souvenir de）"
+                "revenir" to "回来；回复", "souvenir" to "记得；想起（se souvenir de）",
+                "tenir" to "拿着；保持"
             ),
-            "je viens / nous venons / je suis venu"
+            "je viens / nous venons / ils viennent；je tiens / nous tenons"
         ),
         VerbFamily(
-            "tenir 族", "与 venir 同型：je tiens / nous tenons。",
-            listOf("tenir" to "拿着；保持"),
-            "je tiens / nous tenons"
-        ),
-        VerbFamily(
-            "prendre 族", "je prends / nous prenons / j'ai pris。",
+            "-endre 特殊型（prendre 族）", "词干 pren-，单数加 -ds：je prends，复数 prenons，第三人称复数 prennent。",
             listOf(
                 "prendre" to "拿；取；乘坐", "comprendre" to "理解；包括",
                 "apprendre" to "学习；得知"
             ),
-            "je prends / nous prenons / j'ai pris"
+            "je prends / nous prenons / ils prennent"
         ),
+
+        // === -ttre / -tir/-mir/-vir / -vrir 型 ===
         VerbFamily(
-            "mettre 族", "je mets / nous mettons / j'ai mis。",
+            "-ttre 型（mettre / battre 族）", "单数去一个 t：je mets / je bats，复数双写 t：nous mettons / nous battons。",
             listOf(
                 "mettre" to "放；穿；花费", "permettre" to "允许；准许",
-                "promettre" to "许诺；保证"
+                "promettre" to "许诺；保证", "battre" to "打；敲"
             ),
-            "je mets / nous mettons / j'ai mis"
+            "je mets / nous mettons；je bats / nous battons"
         ),
         VerbFamily(
-            "dire 族", "je dis / nous disons，注意 vous dites。",
-            listOf("dire" to "说；告诉"),
-            "je dis / nous disons / vous dites"
-        ),
-        VerbFamily(
-            "lire 族", "je lis / nous lisons / j'ai lu。",
-            listOf("lire" to "读；阅读"),
-            "je lis / nous lisons / j'ai lu"
-        ),
-        VerbFamily(
-            "écrire 族", "je écris / nous écrivons / j'ai écrit。",
-            listOf("écrire" to "写；书写", "décrire" to "描述；描写"),
-            "je écris / nous écrivons / j'ai écrit"
-        ),
-        VerbFamily(
-            "voir 族", "je vois / nous voyons / je verrai。",
-            listOf("voir" to "看见；看"),
-            "je vois / nous voyons / je verrai"
-        ),
-        VerbFamily(
-            "recevoir 族", "je reçois / nous recevons / j'ai reçu。",
-            listOf("recevoir" to "收到；接待", "apercevoir" to "察觉；瞥见"),
-            "je reçois / nous recevons / j'ai reçu"
-        ),
-        VerbFamily(
-            "connaître 族", "je connais / nous connaissons，注意 â 在词形中的变化。",
+            "-tir / -mir / -vir 型（partir 族）", "单数去掉词干尾辅音：je pars / je dors / je sers，复数保留完整词干。",
             listOf(
-                "connaître" to "认识；知道", "reconnaître" to "认出；承认",
-                "paraître" to "出现；显得", "apparaître" to "出现；显现"
+                "partir" to "离开；出发", "sortir" to "出去；拿出", "dormir" to "睡觉",
+                "sentir" to "感觉；闻到", "servir" to "服务；有用", "mentir" to "撒谎"
             ),
-            "je connais / nous connaissons"
+            "je pars / nous partons；je dors / nous dormons"
         ),
         VerbFamily(
-            "naître 族", "以 être 作助动词：je suis né。",
-            listOf("naître" to "出生；诞生"),
-            "je suis né"
-        ),
-        VerbFamily(
-            "vivre / survivre", "je vis / nous vivons / j'ai vécu。",
-            listOf("vivre" to "生活；活着", "survivre" to "幸存；活下来"),
-            "je vis / nous vivons / j'ai vécu"
-        ),
-        VerbFamily(
-            "suivre / poursuivre", "je suis / nous suivons / j'ai suivi。",
-            listOf("suivre" to "跟随；沿着", "poursuivre" to "继续；追捕"),
-            "je suis / nous suivons / j'ai suivi"
-        ),
-        VerbFamily(
-            "rire / sourire", "je ris / nous rions / j'ai ri。",
-            listOf("rire" to "笑", "sourire" to "微笑"),
-            "je ris / nous rions / j'ai ri"
-        ),
-        VerbFamily(
-            "boire / croire", "词干单复数不同：je bois / nous buvons。",
-            listOf("boire" to "喝；饮", "croire" to "相信；认为"),
-            "je bois / nous buvons"
-        ),
-        VerbFamily(
-            "-uire 族（conduire 型）", "je conduis / nous conduisons / j'ai conduit。",
+            "-vrir / -frir 型（ouvrir 族）", "现在时变位同第一组 -er：j'ouvre / nous ouvrons，但过去分词特殊（-ert）。",
             listOf(
-                "conduire" to "驾驶；带领", "produire" to "生产；产生",
-                "construire" to "建造；建立", "traduire" to "翻译",
-                "réduire" to "减少；缩小", "détruire" to "摧毁；破坏"
+                "ouvrir" to "打开", "offrir" to "赠送；提供", "souffrir" to "受苦；忍受",
+                "couvrir" to "覆盖；遮盖", "découvrir" to "发现；揭开"
             ),
-            "je conduis / nous conduisons / j'ai conduit"
+            "j'ouvre / nous ouvrons / j'ai ouvert"
         ),
+
+        // === -indre / -uire / -aître 型 ===
         VerbFamily(
-            "-aindre / -eindre / -oindre 族", "je crains / nous craignons / j'ai craint。",
+            "-aindre / -eindre / -oindre 族", "单数去 -dre：je crains，复数词干加 -gn-：nous craignons。",
             listOf(
                 "craindre" to "害怕；担心", "peindre" to "画；粉刷",
                 "éteindre" to "熄灭；关（灯）", "joindre" to "连接；加上",
@@ -194,33 +156,35 @@ object VerbGroups {
             "je crains / nous craignons / j'ai craint"
         ),
         VerbFamily(
-            "vaincre", "je vaincs / nous vainquons / j'ai vaincu。",
-            listOf("vaincre" to "战胜；克服"),
-            "je vaincs / nous vainquons / j'ai vaincu"
-        ),
-        VerbFamily(
-            "courir / mourir / fuir", "三种不同不规则型：je cours / je meurs / je fuis。",
-            listOf("courir" to "跑；奔跑", "mourir" to "死；去世", "fuir" to "逃跑；逃避"),
-            "je cours / je meurs / je fuis"
-        ),
-        VerbFamily(
-            "partir 族（-tir / -mir / -vrir）", "单数去掉词干辅音：je pars / nous partons。",
+            "-uire 族（conduire 型）", "单数 je conduis / tu conduis / il conduit，复数 nous conduisons，过去分词 -uit。",
             listOf(
-                "partir" to "离开；出发", "sortir" to "出去；拿出", "dormir" to "睡觉",
-                "sentir" to "感觉；闻到", "servir" to "服务；有用", "mentir" to "撒谎"
+                "conduire" to "驾驶；带领", "produire" to "生产；产生",
+                "construire" to "建造；建立", "traduire" to "翻译",
+                "réduire" to "减少；缩小", "détruire" to "摧毁；破坏"
             ),
-            "je pars / nous partons"
+            "je conduis / nous conduisons / j'ai conduit"
         ),
         VerbFamily(
-            "ouvrir 族", "变位接近第一组：j'ouvre / nous ouvrons，但过去分词特殊。",
+            "-aître 族（connaître / naître 型）", "复数词干加 -ss-：je connais / nous connaissons；naître 以 être 作助动词。",
             listOf(
-                "ouvrir" to "打开", "offrir" to "赠送；提供", "souffrir" to "受苦；忍受",
-                "couvrir" to "覆盖；遮盖", "découvrir" to "发现；揭开"
+                "connaître" to "认识；知道", "reconnaître" to "认出；承认",
+                "paraître" to "出现；显得", "apparaître" to "出现；显现",
+                "naître" to "出生；诞生"
             ),
-            "j'ouvre / nous ouvrons"
+            "je connais / nous connaissons；je suis né"
+        ),
+
+        // === -ire 类 ===
+        VerbFamily(
+            "-ire 特殊型（dire / lire / écrire）", "单数 je dis / je lis / j'écris（-is/-is/-it），复数词干 + ons/ez/ent；注意 dire 的 vous dites。",
+            listOf(
+                "dire" to "说；告诉", "lire" to "读；阅读",
+                "écrire" to "写；书写", "décrire" to "描述；描写"
+            ),
+            "je dis / nous disons / vous dites；je lis / j'écris"
         ),
         VerbFamily(
-            "-re 规则型（vendre 型）", "je vends / nous vendons / j'ai vendu。",
+            "-re 规则型（vendre 型）", "规则 -re 变位：je vends / nous vendons，过去分词 -u。",
             listOf(
                 "vendre" to "卖；出售", "perdre" to "失去；输", "attendre" to "等待",
                 "entendre" to "听见；听懂", "répondre" to "回答；回复", "rendre" to "归还；使…成为",
@@ -229,17 +193,29 @@ object VerbGroups {
             "je vends / nous vendons / j'ai vendu"
         ),
         VerbFamily(
-            "battre 族", "je bats / nous battons / j'ai battu。",
-            listOf("battre" to "打；敲"),
-            "je bats / nous battons / j'ai battu"
+            "-re 词干变化型（vivre / suivre / rire / boire / croire）", "单复数词干不同：je vis / nous vivons；je bois / nous buvons；je crois / nous croyons。",
+            listOf(
+                "vivre" to "生活；活着", "survivre" to "幸存；活下来",
+                "suivre" to "跟随；沿着", "poursuivre" to "继续；追捕",
+                "rire" to "笑", "sourire" to "微笑",
+                "boire" to "喝；饮", "croire" to "相信；认为"
+            ),
+            "je vis / nous vivons；je bois / nous buvons"
+        ),
+
+        // === 单独不规则 ===
+        VerbFamily(
+            "vaincre", "c/qu 交替：je vaincs / nous vainquons / j'ai vaincu。",
+            listOf("vaincre" to "战胜；克服"),
+            "je vaincs / nous vainquons / j'ai vaincu"
         ),
         VerbFamily(
-            "envoyer", "现在时词干 envoi-，将来时 enverr-。",
-            listOf("envoyer" to "发送；寄"),
-            "j'envoie / j'enverrai"
+            "courir / mourir / fuir", "三种不同不规则型：je cours / je meurs / je fuis。mourir 用 être 作助动词。",
+            listOf("courir" to "跑；奔跑", "mourir" to "死；去世", "fuir" to "逃跑；逃避"),
+            "je cours / je meurs / je fuis"
         ),
         VerbFamily(
-            "valoir / pleuvoir / falloir", "valoir 为不规则；pleuvoir 与 falloir 为无人称动词。",
+            "valoir / pleuvoir / falloir", "valoir 为不规则（je vaux / nous valons）；pleuvoir 与 falloir 为无人称动词（只变 il 形式）。",
             listOf(
                 "valoir" to "价值；值得", "pleuvoir" to "下雨（无人称）",
                 "falloir" to "必须；需要（无人称）"
