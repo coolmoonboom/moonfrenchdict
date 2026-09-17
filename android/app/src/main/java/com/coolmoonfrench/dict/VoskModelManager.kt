@@ -43,6 +43,9 @@ object VoskModelManager {
     /** 建议的最小可用内存（字节），低于该值提示大模型可能卡顿/崩溃 */
     private const val LARGE_MODEL_MIN_MEM = 4L * 1024 * 1024 * 1024 // 4GB
 
+    /** 加载大模型需要预留的可用内存（字节）：模型 ~1.4G 原生载入 + 运行余量 */
+    private const val LARGE_MODEL_MIN_FREE_MEM = 2L * 1024 * 1024 * 1024 // 2GB
+
     /** 模型可选状态 */
     sealed class ModelOption {
         /** 内置小模型（始终可用） */
@@ -57,6 +60,7 @@ object VoskModelManager {
         object NotDownloaded : LargeModelState()
         data class Downloading(val percent: Int, val bytesRead: Long, val totalBytes: Long) : LargeModelState()
         data class DownloadFailed(val message: String) : LargeModelState()
+        object Installing : LargeModelState()
         object Ready : LargeModelState()
     }
 
@@ -85,6 +89,12 @@ object VoskModelManager {
             .edit().putString(K_MODEL_CHOICE, if (large) VALUE_LARGE else VALUE_SMALL).apply()
     }
 
+    /** 用户是否选择了大模型（读取原始偏好，不要求大模型已就绪，用于恢复初始选中态） */
+    fun userPrefersLarge(context: Context): Boolean {
+        val p = context.getSharedPreferences("video_text", Context.MODE_PRIVATE)
+        return p.getString(K_MODEL_CHOICE, VALUE_SMALL) == VALUE_LARGE
+    }
+
     /** 当前生效模型的目录（返回 null 表示模型不可用） */
     fun currentModelDir(context: Context): File? {
         return when (getModelChoice(context)) {
@@ -93,15 +103,15 @@ object VoskModelManager {
         }.takeIf { isValidModelDir(it) }
     }
 
-    /** 设备总内存是否满足大模型最低要求（>= 4GB） */
+    /** 设备内存是否满足大模型要求：总内存 >= 4GB 且当前可用内存 >= 2GB */
     fun hasEnoughMemory(context: Context): Boolean {
         return try {
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
             val mi = android.app.ActivityManager.MemoryInfo()
             am.getMemoryInfo(mi)
-            mi.totalMem >= LARGE_MODEL_MIN_MEM
+            mi.totalMem >= LARGE_MODEL_MIN_MEM && mi.availMem >= LARGE_MODEL_MIN_FREE_MEM
         } catch (e: Exception) {
-            true // 获取失败时不做硬性限制，仅作提示
+            false // 获取失败时按不满足处理，避免大模型在高内存压力下 OOM/卡死
         }
     }
 
@@ -240,61 +250,8 @@ object VoskModelManager {
 
                 if (zip.length() == 0L) throw IOException("下载结果为空")
 
-                // 解压到大模型目录
-                val dest = largeDir(context)
-                if (isValidModelDir(dest)) {
-                    onProgress(LargeModelState.Ready)
-                    return@withContext
-                }
-                if (dest.exists()) dest.deleteRecursively()
-                dest.mkdirs()
-
-                ZipInputStream(zip.inputStream().buffered()).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        coroutineContext.ensureActive()
-                        val target = File(dest, entry.name)
-                        if (entry.isDirectory) {
-                            target.mkdirs()
-                        } else {
-                            // 防 zip-slip
-                            if (!target.canonicalPath.startsWith(dest.canonicalPath)) {
-                                throw IOException("非法解压路径：${entry.name}")
-                            }
-                            target.parentFile?.mkdirs()
-                            FileOutputStream(target).use { out -> zis.copyTo(out) }
-                        }
-                        entry = zis.nextEntry
-                    }
-                }
-
-                // Vosk 官方 zip 在顶层包了一个与模型同名目录（如 vosk-model-fr-0.22/），
-                // 解压后模型文件实际位于 dest/<name>/ 下。将其内容提升到 dest 根目录，
-                // 使 isValidModelDir(dest) 能直接校验。
-                val nestedDir = dest.listFiles()?.firstOrNull { it.isDirectory && it.name.startsWith("vosk-model-") }
-                if (nestedDir != null) {
-                    nestedDir.listFiles()?.forEach { child ->
-                        val target = File(dest, child.name)
-                        if (child.isDirectory) {
-                            if (!target.exists()) target.mkdirs()
-                            child.copyRecursively(target, overwrite = true)
-                            child.deleteRecursively()
-                        } else {
-                            child.copyTo(target, overwrite = true)
-                            child.delete()
-                        }
-                    }
-                    nestedDir.deleteRecursively()
-                }
-
-                // 解压后校验
-                if (!isValidModelDir(dest)) {
-                    dest.deleteRecursively()
-                    zip.delete()
-                    throw IOException("大模型解压校验失败，已清理")
-                }
-
-                // 解压成功后可删除 zip 释放缓存空间
+                onProgress(LargeModelState.Installing)
+                installZip(context, zip, onProgress)
                 zip.delete()
                 onProgress(LargeModelState.Ready)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -303,6 +260,110 @@ object VoskModelManager {
                 onProgress(LargeModelState.DownloadFailed(e.message ?: e.javaClass.simpleName))
                 throw IOException("大模型下载失败：${e.message}", e)
             }
+        }
+    }
+
+    /**
+     * 从用户选择的自选 zip 导入模型（网络下载的 zip 也会复用 [installZip]）。
+     * 拷贝到缓存 → 解压 → 校验，成功即与官方大模型共用一个目录。
+     */
+    suspend fun importLargeModel(
+        context: Context,
+        uri: android.net.Uri,
+        onProgress: (LargeModelState) -> Unit
+    ) {
+        withContext(Dispatchers.IO) {
+            var zip: File? = null
+            try {
+                onProgress(LargeModelState.Installing)
+                val dest = largeDir(context)
+                if (isValidModelDir(dest)) {
+                    onProgress(LargeModelState.Ready)
+                    return@withContext
+                }
+                if (dest.exists()) dest.deleteRecursively()
+
+                // 拷贝用户所选 zip 到缓存（命名沿用官方 zip，便于后续识别缓存占用/命中）
+                val tmp = zipFile(context)
+                if (tmp.exists()) tmp.delete()
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    tmp.outputStream().use { out -> input.copyTo(out) }
+                } ?: throw IOException("无法打开所选模型文件")
+
+                if (tmp.length() == 0L) throw IOException("所选模型文件为空")
+
+                installZip(context, tmp, onProgress)
+                tmp.delete()
+                onProgress(LargeModelState.Ready)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                zipFile(context).delete()
+                onProgress(LargeModelState.DownloadFailed(e.message ?: e.javaClass.simpleName))
+                throw IOException("模型导入失败：${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * 把已下载/已拷贝的 zip 解压到大模型目录，处理顶层同名目录提升并校验。
+     * 解压成功后 zip 仍保留，由调用方决定是否删除。
+     */
+    private suspend fun installZip(
+        context: Context,
+        zip: File,
+        onProgress: (LargeModelState) -> Unit
+    ) {
+        val dest = largeDir(context)
+        if (isValidModelDir(dest)) {
+            onProgress(LargeModelState.Ready)
+            return
+        }
+        if (dest.exists()) dest.deleteRecursively()
+        dest.mkdirs()
+
+        ZipInputStream(zip.inputStream().buffered()).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                coroutineContext.ensureActive()
+                val target = File(dest, entry.name)
+                if (entry.isDirectory) {
+                    target.mkdirs()
+                } else {
+                    // 防 zip-slip
+                    if (!target.canonicalPath.startsWith(dest.canonicalPath)) {
+                        throw IOException("非法解压路径：${entry.name}")
+                    }
+                    target.parentFile?.mkdirs()
+                    FileOutputStream(target).use { out -> zis.copyTo(out) }
+                }
+                entry = zis.nextEntry
+            }
+        }
+
+        // Vosk 官方 zip 在顶层包了一个与模型同名目录（如 vosk-model-fr-0.22/），
+        // 解压后模型文件实际位于 dest/<name>/ 下。将其内容提升到 dest 根目录，
+        // 使 isValidModelDir(dest) 能直接校验。
+        val nestedDir = dest.listFiles()?.firstOrNull { it.isDirectory && it.name.startsWith("vosk-model-") }
+        if (nestedDir != null) {
+            nestedDir.listFiles()?.forEach { child ->
+                val target = File(dest, child.name)
+                if (child.isDirectory) {
+                    if (!target.exists()) target.mkdirs()
+                    child.copyRecursively(target, overwrite = true)
+                    child.deleteRecursively()
+                } else {
+                    child.copyTo(target, overwrite = true)
+                    child.delete()
+                }
+            }
+            nestedDir.deleteRecursively()
+        }
+
+        // 解压后校验
+        if (!isValidModelDir(dest)) {
+            dest.deleteRecursively()
+            throw IOException("模型解压校验失败，已清理")
         }
     }
 

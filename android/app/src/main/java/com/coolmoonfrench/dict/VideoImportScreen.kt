@@ -12,7 +12,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -25,6 +27,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import com.coolmoonfrench.dict.room.VideoTextDatabase
 import com.coolmoonfrench.dict.room.VideoTextRecord
@@ -54,8 +61,8 @@ fun VideoImportScreen(
         mutableStateOf<VoskModelManager.LargeModelState>(VoskModelManager.LargeModelState.NotDownloaded)
     }
 
-    // 内存充足标记（用于提示）
-    val enoughMem = remember { VoskModelManager.hasEnoughMemory(context) }
+    // 内存是否满足大模型要求（可用内存可能随时间变化，每次识别前都重新校验）
+    var enoughMem by remember { mutableStateOf(VoskModelManager.hasEnoughMemory(context)) }
 
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var selectedName by remember { mutableStateOf("") }
@@ -86,19 +93,35 @@ fun VideoImportScreen(
         }
     }
 
+    // 卸载大模型确认弹窗
+    var confirmUninstall by remember { mutableStateOf(false) }
+
     // 打开界面时刷新大模型状态
     LaunchedEffect(Unit) {
+        enoughMem = VoskModelManager.hasEnoughMemory(context)
         largeState = if (VoskModelManager.isLargeReady(context)) {
             VoskModelManager.LargeModelState.Ready
         } else {
             VoskModelManager.LargeModelState.NotDownloaded
         }
-        useLarge = hadChosenLarge(context) && VoskModelManager.isLargeReady(context)
+        useLarge = VoskModelManager.userPrefersLarge(context) && VoskModelManager.isLargeReady(context)
     }
 
     // 大模型下载任务
-    var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    val downloadInProgress = largeState is VoskModelManager.LargeModelState.Downloading
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
+    var recognitionJob by remember { mutableStateOf<Job?>(null) }
+    val downloadInProgress = largeState is VoskModelManager.LargeModelState.Downloading ||
+        largeState is VoskModelManager.LargeModelState.Installing ||
+        downloadJob != null
+
+    fun afterModelStateChange(state: VoskModelManager.LargeModelState) {
+        largeState = state
+        if (state is VoskModelManager.LargeModelState.Ready) {
+            // 下载/导入完成后：内存可能有变化，重刷内存标记；并确认偏好项已同步为大模型
+            enoughMem = VoskModelManager.hasEnoughMemory(context)
+            VoskModelManager.setModelChoice(context, large = true)
+        }
+    }
 
     fun startDownload() {
         if (downloadInProgress) return
@@ -109,13 +132,15 @@ fun VideoImportScreen(
         downloadJob = scope.launch {
             try {
                 VoskModelManager.downloadLargeModel(context) { state ->
-                    largeState = state
+                    afterModelStateChange(state)
                 }
             } catch (e: Exception) {
                 // downloadLargeModel 内部已回调 DownloadFailed；若在状态推送前就抛错，这里兜底
                 if (largeState !is VoskModelManager.LargeModelState.DownloadFailed) {
                     largeState = VoskModelManager.LargeModelState.NotDownloaded
                 }
+            } finally {
+                downloadJob = null
             }
         }
     }
@@ -126,13 +151,39 @@ fun VideoImportScreen(
         largeState = VoskModelManager.LargeModelState.NotDownloaded
     }
 
+    // 导入自选模型（本地 zip）
+    val importPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            errorMsg = ""
+            downloadJob?.cancel()
+            largeState = VoskModelManager.LargeModelState.Installing
+            downloadJob = scope.launch {
+                try {
+                    VoskModelManager.importLargeModel(context, uri) { state ->
+                        afterModelStateChange(state)
+                    }
+                } catch (e: Exception) {
+                    if (largeState !is VoskModelManager.LargeModelState.DownloadFailed) {
+                        largeState = VoskModelManager.LargeModelState.NotDownloaded
+                    }
+                } finally {
+                    downloadJob = null
+                }
+            }
+        }
+    }
+
     fun startRecognition() {
         val uri = selectedUri ?: run {
             errorMsg = "请先选择视频文件"
             return
         }
+        // 识别前实时校验一次内存，避免用缓存的误判
+        enoughMem = VoskModelManager.hasEnoughMemory(context)
         if (!enoughMem && useLarge) {
-            errorMsg = "当前设备内存小于 4GB，不建议使用大模型，请切换小模型"
+            errorMsg = "当前设备内存不足（可用内存 < 2GB），请切换小模型"
             return
         }
         if (useLarge && largeState !is VoskModelManager.LargeModelState.Ready) {
@@ -144,9 +195,12 @@ fun VideoImportScreen(
         errorMsg = ""
         savedId = -1
         isFav = false
-        scope.launch {
+        recognitionJob?.cancel()
+        recognitionJob = scope.launch {
             val res = VideoToText.processVideo(context, uri)
+            if (!isActive) return@launch
             busy = false
+            recognitionJob = null
             res.fold(
                 onSuccess = { text ->
                     resultText = text
@@ -171,6 +225,31 @@ fun VideoImportScreen(
                     errorMsg = e.message ?: "识别失败"
                 }
             )
+        }
+    }
+
+    /**
+     * 界面进入后台（ON_STOP）时取消进行中的识别与下载：
+     * 大模型识别本身是 CPU/内存密集的原生循环，若用户切后台仍继续跑，会在回前台时造成
+     * 内存压力下的卡死。取消后 busy 复位，回到前台可重新开始识别。
+     */
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                recognitionJob?.cancel()
+                recognitionJob = null
+                downloadJob?.cancel()
+                downloadJob = null
+                if (busy) {
+                    busy = false
+                    errorMsg = "识别已取消（切到后台终止），请回到前台重新识别"
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -222,7 +301,6 @@ fun VideoImportScreen(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(
-                            enabled = enoughMem,
                             selected = useLarge,
                             onClick = {
                                 useLarge = true
@@ -230,24 +308,56 @@ fun VideoImportScreen(
                             }
                         )
                         Column(Modifier.weight(1f)) {
-                            Text("大模型（高精度，需下载）", fontSize = 15.sp)
-                            Text("识别更准确，占空间约 1.4GB", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("大模型（高精度）", fontSize = 15.sp)
+                            Text(
+                                if (VoskModelManager.isLargeReady(context))
+                                    "已就绪，可用内存 ≥2GB 时识别更准确"
+                                else
+                                    "识别更准确，占空间约 1.4GB，需下载或导入",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
 
-                    if (!enoughMem) {
+                    if (useLarge && !enoughMem) {
                         Text(
-                            "当前设备内存不足 4GB，大模型不可用",
+                            "当前可用内存不足 2GB，建议切换小模型以免卡顿/崩溃",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.error
                         )
                     }
+                    if (useLarge && enoughMem && !VoskModelManager.isLargeReady(context)) {
+                        Text(
+                            "模型自理：可下载官方大模型，或导入本地自选模型 zip",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-                    // 大模型下载区
+                    // 大模型下载/导入/卸载区
                     if (useLarge) {
                         when (val st = largeState) {
                             is VoskModelManager.LargeModelState.Ready -> {
                                 Text("大模型已就绪", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = { importPicker.launch(arrayOf("application/zip", "application/octet-stream")) },
+                                        enabled = !downloadInProgress
+                                    ) {
+                                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("替换/导入模型", fontSize = 13.sp)
+                                    }
+                                    TextButton(
+                                        onClick = { confirmUninstall = true },
+                                        enabled = !downloadInProgress
+                                    ) {
+                                        Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("卸载", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
                             }
                             is VoskModelManager.LargeModelState.Downloading -> {
                                 LinearProgressIndicator(
@@ -257,19 +367,40 @@ fun VideoImportScreen(
                                 Text("下载中：${st.percent}%  ${st.bytesRead / 1024 / 1024}/${st.totalBytes / 1024 / 1024} MB", fontSize = 12.sp)
                                 TextButton(onClick = { cancelDownload() }) { Text("取消下载") }
                             }
+                            is VoskModelManager.LargeModelState.Installing -> {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                                Text("正在解压模型…", fontSize = 12.sp)
+                            }
                             is VoskModelManager.LargeModelState.DownloadFailed -> {
-                                Text("下载失败：${st.message}", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
-                                Button(onClick = { startDownload() }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                                    Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("重试下载", fontSize = 13.sp)
+                                Text("下载/导入失败：${st.message}", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { startDownload() }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+                                        Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("重试下载", fontSize = 13.sp)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { importPicker.launch(arrayOf("application/zip", "application/octet-stream")) },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("导入本地 zip", fontSize = 13.sp)
+                                    }
                                 }
                             }
                             is VoskModelManager.LargeModelState.NotDownloaded -> {
-                                Button(onClick = { startDownload() }) {
-                                    Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("下载大模型")
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { startDownload() }) {
+                                        Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("下载大模型")
+                                    }
+                                    OutlinedButton(
+                                        onClick = { importPicker.launch(arrayOf("application/zip", "application/octet-stream")) }
+                                    ) {
+                                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("导入自选模型")
+                                    }
                                 }
                             }
                         }
@@ -441,6 +572,33 @@ fun VideoImportScreen(
                 }
             }
         }
+    }
+
+    // ---------- 卸载大模型确认弹窗 ----------
+    if (confirmUninstall) {
+        AlertDialog(
+            onDismissRequest = { confirmUninstall = false },
+            title = { Text("卸载大模型") },
+            text = { Text("将删除已下载的大模型文件（约 1.4GB），释放存储空间。删除后如需高精度识别可重新下载或导入。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmUninstall = false
+                    // 删除模型文件并回落小模型
+                    VoskModelManager.deleteLargeModel(context)
+                    largeState = VoskModelManager.LargeModelState.NotDownloaded
+                    useLarge = false
+                    VoskModelManager.setModelChoice(context, large = false)
+                    errorMsg = ""
+                }) {
+                    Text("确认卸载", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmUninstall = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 

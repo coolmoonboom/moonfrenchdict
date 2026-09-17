@@ -5,12 +5,14 @@ import android.net.Uri
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.ReturnCode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
 import java.io.File
 import java.io.IOException
+import kotlin.coroutines.coroutineContext
 
 /**
  * 视频转文字：ffmpeg 提取音频 → Vosk 识别法语文本。
@@ -41,6 +43,7 @@ object VideoToText {
             var tempVideo: File? = null
             var tempWav: File? = null
             try {
+                ensureActive()
                 // content:// 不能直接交给 ffmpeg，先拷贝到缓存目录
                 tempVideo = File(context.cacheDir, "video_in_${System.currentTimeMillis()}.mp4")
                 copyUriToFile(context, videoUri, tempVideo)
@@ -49,6 +52,7 @@ object VideoToText {
                 }
 
                 // 提取 16k 单声道 PCM 音频
+                ensureActive()
                 tempWav = File(context.cacheDir, "audio_${System.currentTimeMillis()}.wav")
                 extractWav(tempVideo, tempWav)
 
@@ -121,6 +125,7 @@ object VideoToText {
             val buf = ByteArray(chunkBytes)
             var offset = 0
             while (offset < pcm.size) {
+                coroutineContext.ensureActive() // 协程取消时立即中断喂入，避免 acceptWaveForm 阻塞原生循环拖垮进程
                 val n = minOf(chunkBytes, pcm.size - offset)
                 System.arraycopy(pcm, offset, buf, 0, n)
                 recognizer.acceptWaveForm(buf, n)

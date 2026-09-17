@@ -13,7 +13,7 @@
 - **收藏夹**：本地收藏单词/句子，支持笔记编辑
 - **AI 助手**：内置对话界面（需自备 API Key 配置），支持历史会话、导出分享
 - **OCR 识别**：图片文字识别基于 Google ML Kit，离线可用
-- **视频转文字**：选择本地法语视频，ffmpeg 提取音频后由 Vosk 离线识别，结果保存到本地记录，识别文本可收藏并随云同步（内置小模型即开即用，可下载高精度大模型）
+- **视频转文字**：选择本地法语视频，ffmpeg 提取音频后由 Vosk 离线识别，结果保存到本地记录，识别文本可收藏并随云同步（内置小模型即开即用，可下载高精度大模型，支持导入本地自选模型、卸载释放空间；识别随界面后台自动取消，可用内存不足时自动提醒）。
 
 ## 技术栈
 
@@ -58,7 +58,7 @@ android/
 │   ├── GrammarPracticeScreen.kt                 # 语法练习
 │   ├── AIScreen.kt                              # AI 助手
 │   ├── VideoImportScreen.kt                     # 视频转文字
-│   ├── VoskModelManager.kt                      # Vosk 模型管理（内置/下载）
+│   ├── VoskModelManager.kt                      # Vosk 模型管理（内置/下载/导入/卸载）
 │   ├── VideoToText.kt                           # ffmpeg + Vosk 识别管线
 │   ├── room/                                    # Room 本地记录
 │   └── ...                                      # 其余功能模块
