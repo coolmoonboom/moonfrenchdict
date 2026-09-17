@@ -99,5 +99,5 @@ Entries discovered by the Agent during task execution should follow this format:
 - Instructions:
   - `SyncManager`/`NutsCloudProvider` 用 OkHttp 同步调用；在 Compose `LaunchedEffect`（主线程）里直接调用会抛 `NetworkOnMainThreadException`，而 `download()` 内部 catch 后返回 null，导致自动同步静默失效。所有同步网络调用必须放在 `withContext(Dispatchers.IO)`（`SyncUi.runSync` 已是 IO）。
   - 云同步默认语义应是「合并云端与本地」（并集后回写+上传），不要用覆盖式上传：新设备本机为空时上传会清空云端，导致其他设备随后拉取也变成空。手动「仅上传本机（覆盖云端）」保留为显式破坏性操作。
-  - 收藏三处持久化：单词收藏在 `DictRepository` 的 `favorites` prefs（StringSet），句子收藏与 AI 收藏在 `AIPreferences` 的 `ai_settings` prefs；`SyncData`/`SyncBundle` 四段（history/favorites/sentences/ai_favorites）须全部打包解包。
+  - 收藏持久化：单词收藏在 `DictRepository` 的 `favorites` prefs（StringSet），句子收藏、AI 收藏、视频转文字收藏在 `AIPreferences` 的 `ai_settings` prefs；`SyncData`/`SyncBundle` 五段（history/favorites/sentences/ai_favorites/video_texts）须全部打包解包，新增收藏类型时同步扩段。
 

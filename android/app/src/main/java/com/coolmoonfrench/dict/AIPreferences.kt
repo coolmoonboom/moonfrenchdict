@@ -150,6 +150,27 @@ data class SavedSentence(
     }
 }
 
+/** 收藏的视频转文字文本 */
+data class VideoTextFavorite(
+    val text: String,
+    val fileName: String,
+    val timestamp: Long
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("text", text)
+        put("file_name", fileName)
+        put("ts", timestamp)
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject): VideoTextFavorite = VideoTextFavorite(
+            text = o.optString("text", ""),
+            fileName = o.optString("file_name", ""),
+            timestamp = o.optLong("ts", System.currentTimeMillis())
+        )
+    }
+}
+
 /**
  * AI 相关持久化：
  * - 模型配置
@@ -407,4 +428,41 @@ class AIPreferences(context: Context) {
 
     /** 整体替换句子收藏（用于同步解包/合并回写） */
     fun replaceSentenceFavorites(list: List<SavedSentence>) = saveSentenceFavorites(list)
+
+    // ---------- 视频转文字收藏 ----------
+    fun loadVideoTextFavorites(): List<VideoTextFavorite> {
+        val json = prefs.getString("video_text_favorites", "[]") ?: "[]"
+        val result = mutableListOf<VideoTextFavorite>()
+        return try {
+            val arr = JSONArray(json)
+            for (i in 0 until arr.length()) result.add(VideoTextFavorite.fromJson(arr.getJSONObject(i)))
+            result
+        } catch (e: Exception) {
+            result
+        }
+    }
+
+    fun isVideoTextFavorite(text: String): Boolean =
+        loadVideoTextFavorites().any { it.text == text }
+
+    fun addVideoTextFavorite(text: String, fileName: String): Boolean {
+        val list = loadVideoTextFavorites().toMutableList()
+        if (list.any { it.text == text }) return false
+        list.add(0, VideoTextFavorite(text, fileName, System.currentTimeMillis()))
+        saveVideoTextFavorites(list)
+        return true
+    }
+
+    fun removeVideoTextFavorite(text: String) {
+        saveVideoTextFavorites(loadVideoTextFavorites().filterNot { it.text == text })
+    }
+
+    private fun saveVideoTextFavorites(list: List<VideoTextFavorite>) {
+        val arr = JSONArray()
+        list.forEach { arr.put(it.toJson()) }
+        prefs.edit().putString("video_text_favorites", arr.toString()).apply()
+    }
+
+    /** 整体替换视频转文字收藏（用于同步解包/合并回写） */
+    fun replaceVideoTextFavorites(list: List<VideoTextFavorite>) = saveVideoTextFavorites(list)
 }

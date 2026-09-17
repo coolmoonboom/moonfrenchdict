@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * SyncBundle 打包/解包测试：确保查词历史、单词收藏、句子收藏、AI 收藏四类数据都能完整往返。
+ * SyncBundle 打包/解包测试：确保查词历史、单词收藏、句子收藏、AI 收藏、视频转文字收藏五类数据都能完整往返。
  * 这是「换设备后看不到收藏」问题的防线——只要云端包不丢数据，合并回写就不会缺内容。
  */
 class SyncBundleTest {
@@ -21,6 +21,10 @@ class SyncBundleTest {
             aiFavorites = listOf(
                 AIFavorite(1L, "assistant", "回答一", 333L),
                 AIFavorite(2L, "user", "提问二", 444L)
+            ),
+            videoTexts = listOf(
+                VideoTextFavorite("pourquoi ce sont les personnes toxiques", "clip.mp4", 555L),
+                VideoTextFavorite("il fait beau aujourd'hui", "video:1000001116", 666L)
             )
         )
 
@@ -34,6 +38,7 @@ class SyncBundleTest {
         assertEquals(data.favorites, restored.favorites)
         assertEquals(data.sentences, restored.sentences)
         assertEquals(data.aiFavorites, restored.aiFavorites)
+        assertEquals(data.videoTexts, restored.videoTexts)
     }
 
     @Test
@@ -42,11 +47,28 @@ class SyncBundleTest {
             history = emptyList(),
             favorites = emptySet(),
             sentences = listOf(SavedSentence("C'est l'été, ça va ?", "夏天到了，你好吗？", 1L)),
-            aiFavorites = listOf(AIFavorite(9L, "assistant", "éàç 中文 \"引号\"", 2L))
+            aiFavorites = listOf(AIFavorite(9L, "assistant", "éàç 中文 \"引号\"", 2L)),
+            videoTexts = listOf(VideoTextFavorite("l'entreprise petit à petit", "clip 视频.mp4", 3L))
         )
 
         val (_, restored) = SyncBundle.unpack(SyncBundle.pack(data, "1.0.15", "d"))
         assertEquals(data.sentences, restored.sentences)
         assertEquals(data.aiFavorites, restored.aiFavorites)
+        assertEquals(data.videoTexts, restored.videoTexts)
+    }
+
+    @Test
+    fun unpack_legacyBundleWithoutVideoTexts_yieldsEmpty() {
+        val legacy = SyncData(
+            history = listOf("bonjour"),
+            favorites = setOf("chat"),
+            sentences = emptyList(),
+            aiFavorites = emptyList(),
+            videoTexts = emptyList()
+        )
+        val (_, restored) = SyncBundle.unpack(SyncBundle.pack(legacy, "1.0.16", "old"))
+        assertEquals(legacy.history, restored.history)
+        assertEquals(legacy.favorites, restored.favorites)
+        assertEquals(emptyList<VideoTextFavorite>(), restored.videoTexts)
     }
 }

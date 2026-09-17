@@ -1,5 +1,8 @@
 package com.coolmoonfrench.dict
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,13 +12,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -39,6 +46,7 @@ fun VideoImportScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val prefs = remember { AIPreferences(context) }
 
     // 模型选择是否默认指向大模型（用户之前选择过才选中，否则小模型）
     var useLarge by remember { mutableStateOf(hadChosenLarge(context)) }
@@ -55,6 +63,15 @@ fun VideoImportScreen(
     var resultText by remember { mutableStateOf("") }
     var errorMsg by remember { mutableStateOf("") }
     var savedId by remember { mutableStateOf(-1L) }
+
+    // 当前识别结果是否已收藏；以及收藏列表（用于展示/移除）
+    var isFav by remember { mutableStateOf(false) }
+    var favList by remember { mutableStateOf(prefs.loadVideoTextFavorites()) }
+
+    fun reloadFavorites() {
+        favList = prefs.loadVideoTextFavorites()
+        isFav = resultText.isNotEmpty() && prefs.isVideoTextFavorite(resultText)
+    }
 
     val videoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -126,12 +143,14 @@ fun VideoImportScreen(
         resultText = ""
         errorMsg = ""
         savedId = -1
+        isFav = false
         scope.launch {
             val res = VideoToText.processVideo(context, uri)
             busy = false
             res.fold(
                 onSuccess = { text ->
                     resultText = text
+                    isFav = prefs.isVideoTextFavorite(text)
                     // 保存到 Room
                     try {
                         val db = VideoTextDatabase.get(context)
@@ -317,6 +336,31 @@ fun VideoImportScreen(
                             if (savedId > 0) {
                                 Text("已保存", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
                             }
+                            IconButton(onClick = {
+                                val clip = ClipData.newPlainText("video_text", resultText)
+                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                                    .setPrimaryClip(clip)
+                            }) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(18.dp))
+                            }
+                            IconButton(onClick = {
+                                isFav = if (isFav) {
+                                    prefs.removeVideoTextFavorite(resultText)
+                                    false
+                                } else {
+                                    prefs.addVideoTextFavorite(resultText, selectedName)
+                                    true
+                                }
+                                reloadFavorites()
+                            }) {
+                                Icon(
+                                    if (isFav) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                    contentDescription = if (isFav) "取消收藏" else "收藏",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = if (isFav) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         Text(
                             resultText,
@@ -335,6 +379,63 @@ fun VideoImportScreen(
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+                }
+            }
+
+            // ---------- 收藏的文字 ----------
+            if (favList.isNotEmpty()) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("收藏的文字", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                            Spacer(Modifier.weight(1f))
+                            Text("${favList.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        favList.forEach { fav ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    fav.text,
+                                    fontSize = 14.sp,
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (fav.fileName.isNotBlank()) {
+                                    Text(
+                                        "来源：${fav.fileName}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    IconButton(onClick = {
+                                        val clip = ClipData.newPlainText("video_text", fav.text)
+                                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                                            .setPrimaryClip(clip)
+                                    }) {
+                                        Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
+                                    }
+                                    TextButton(onClick = {
+                                        prefs.removeVideoTextFavorite(fav.text)
+                                        reloadFavorites()
+                                    }) {
+                                        Text("移除", fontSize = 12.sp)
+                                    }
+                                }
+                            }
                         }
                     }
                 }

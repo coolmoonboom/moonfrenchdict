@@ -141,10 +141,11 @@ data class SyncData(
     val history: List<String>,            // 查词历史（新→旧，原始词）
     val favorites: Set<String>,           // 收藏单词
     val sentences: List<SavedSentence>,   // 收藏句子
-    val aiFavorites: List<AIFavorite>     // 收藏 AI 回答
+    val aiFavorites: List<AIFavorite>,    // 收藏 AI 回答
+    val videoTexts: List<VideoTextFavorite> // 收藏的视频转文字
 ) {
     companion object {
-        val EMPTY = SyncData(emptyList(), emptySet(), emptyList(), emptyList())
+        val EMPTY = SyncData(emptyList(), emptySet(), emptyList(), emptyList(), emptyList())
     }
 }
 
@@ -157,6 +158,7 @@ object SyncBundle {
     const val FAVORITES = "favorites.json"
     const val SENTENCES = "sentences.json"
     const val AI_FAVORITES = "ai_favorites.json"
+    const val VIDEO_TEXTS = "video_texts.json"
 
     data class Manifest(
         val format: Int,
@@ -196,6 +198,10 @@ object SyncBundle {
             val ai = JSONArray()
             data.aiFavorites.forEach { ai.put(it.toJson()) }
             add(AI_FAVORITES, ai.toString())
+
+            val vt = JSONArray()
+            data.videoTexts.forEach { vt.put(it.toJson()) }
+            add(VIDEO_TEXTS, vt.toString())
         }
         return bos.toByteArray()
     }
@@ -245,7 +251,12 @@ object SyncBundle {
             (0 until arr.length()).map { AIFavorite.fromJson(arr.getJSONObject(it)) }
         } catch (e: Exception) { emptyList() }
 
-        return manifest to SyncData(history, favorites, sentences, aiFavs)
+        val videoTexts = try {
+            val arr = JSONArray(files[VIDEO_TEXTS] ?: "[]")
+            (0 until arr.length()).map { VideoTextFavorite.fromJson(arr.getJSONObject(it)) }
+        } catch (e: Exception) { emptyList() }
+
+        return manifest to SyncData(history, favorites, sentences, aiFavs, videoTexts)
     }
 }
 
@@ -284,7 +295,8 @@ class SyncManager(
         history = repository.historyWords(),
         favorites = repository.favoriteWords(),
         sentences = aiPrefs.loadSentenceFavorites(),
-        aiFavorites = aiPrefs.loadAIFavorites()
+        aiFavorites = aiPrefs.loadAIFavorites(),
+        videoTexts = aiPrefs.loadVideoTextFavorites()
     )
 
     fun applyLocal(data: SyncData) {
@@ -292,6 +304,7 @@ class SyncManager(
         repository.replaceFavorites(data.favorites)
         aiPrefs.replaceSentenceFavorites(data.sentences)
         aiPrefs.replaceAIFavorites(data.aiFavorites)
+        aiPrefs.replaceVideoTextFavorites(data.videoTexts)
     }
 
     // ---------- 快照（回滚用） ----------
@@ -381,7 +394,12 @@ class SyncManager(
             if (mergedAi.none { it.content == f.content }) mergedAi.add(f)
         }
 
-        val merged = SyncData(mergedHistory, mergedFavs, mergedSentences, mergedAi)
+        val mergedVideoTexts = ArrayList<VideoTextFavorite>()
+        (cloud.videoTexts + local.videoTexts).forEach { v ->
+            if (mergedVideoTexts.none { it.text == v.text }) mergedVideoTexts.add(v)
+        }
+
+        val merged = SyncData(mergedHistory, mergedFavs, mergedSentences, mergedAi, mergedVideoTexts)
         return try {
             takeSnapshot()
             applyLocal(merged)

@@ -65,7 +65,7 @@ fun SidebarFavoritesScreen(
                 Text("AI 收藏", modifier = Modifier.padding(vertical = 12.dp))
             }
             Tab(selected = tabIndex == 1, onClick = { tabIndex = 1 }) {
-                Text("单词·句子收藏", modifier = Modifier.padding(vertical = 12.dp))
+                Text("单词·句子·视频", modifier = Modifier.padding(vertical = 12.dp))
             }
         }
 
@@ -149,6 +149,7 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
     var sentenceFavs by remember { mutableStateOf(prefs.loadSentenceFavorites()) }
+    var videoFavs by remember { mutableStateOf(prefs.loadVideoTextFavorites()) }
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
@@ -158,14 +159,16 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
     fun reload() {
         wordFavs = repository.loadFavorites()
         sentenceFavs = prefs.loadSentenceFavorites()
+        videoFavs = prefs.loadVideoTextFavorites()
     }
 
     val hasWords = wordFavs.isNotEmpty()
     val hasSentences = sentenceFavs.isNotEmpty()
+    val hasVideoTexts = videoFavs.isNotEmpty()
 
-    if (!hasWords && !hasSentences) {
+    if (!hasWords && !hasSentences && !hasVideoTexts) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("暂无收藏。可在查词界面或句子分析中收藏。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
+            Text("暂无收藏。可在查词界面、句子分析或视频转文字中收藏。", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(24.dp))
         }
         return
     }
@@ -174,6 +177,58 @@ private fun WordSentenceFavoritesTab(prefs: AIPreferences, repository: DictRepos
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        // 视频文字收藏
+        if (hasVideoTexts) {
+            Text(
+                "视频文字收藏",
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                color = MaterialTheme.colorScheme.primary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+            videoFavs.forEach { fav ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            fav.text,
+                            fontSize = 14.sp,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (fav.fileName.isNotBlank()) {
+                            Text(
+                                "来源：${fav.fileName}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            IconButton(onClick = {
+                                val clip = ClipData.newPlainText("video_text", fav.text)
+                                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                            }) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
+                            }
+                            TextButton(onClick = {
+                                prefs.removeVideoTextFavorite(fav.text)
+                                reload()
+                            }) {
+                                Text("移除", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 句子收藏
         if (hasSentences) {
             Text(
