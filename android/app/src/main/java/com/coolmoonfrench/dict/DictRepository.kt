@@ -43,31 +43,48 @@ class DictRepository(private val context: Context) {
 
     private val dbHelper by lazy { DictDbHelper(context) }
 
-    // 供模糊/相似搜索的轻量内存索引
+    // 供模糊/相似搜索的轻量内存索引（后台构建，不阻塞首屏）
     private var normSet: Set<String> = emptySet()
     private var normById: HashMap<Int, String> = HashMap()
-    private var idByNorm: HashMap<String, Int> = HashMap()
+    private val indexLock = Any()
+    @Volatile
+    private var indexReady = false
 
-    suspend fun load() = withContext(Dispatchers.IO) {
+    /**
+     * 确保数据库就绪：首次把 assets 中的 dictionary.db 拷贝到应用目录并打开。
+     * 启动时只等这一步，快速进入界面，不走全表扫描。
+     */
+    suspend fun ensureReady() = withContext(Dispatchers.IO) {
         ensureDatabase()
-        val db = dbHelper.readableDatabase
-        // 加载全部 norm 到内存，模糊/近似搜索直接基于内存候选，避免逐条查库
-        val nMap = HashMap<Int, String>()
-        val normSetLocal = HashSet<String>()
-        db.rawQuery("SELECT id, norm FROM dict", null).use { c ->
-            while (c.moveToNext()) {
-                val id = c.getInt(0)
-                val norm = c.getString(1)
-                nMap[id] = norm
-                normSetLocal.add(norm)
-            }
-        }
-        normById = nMap
-        idByNorm = HashMap<String, Int>().apply {
-            for ((id, norm) in nMap) put(norm, id)
-        }
-        normSet = normSetLocal
+        dbHelper.readableDatabase
     }
+
+    /**
+     * 构建模糊搜索内存索引（全表扫描 id+norm，幂等）。
+     * 首次调用在调用线程完成，调用方需保证处于 IO 线程。
+     */
+    fun ensureIndex() {
+        if (indexReady) return
+        synchronized(indexLock) {
+            if (indexReady) return
+            dbHelper.readableDatabase.rawQuery("SELECT id, norm FROM dict", null).use { c ->
+                val nMap = HashMap<Int, String>()
+                val normSetLocal = HashSet<String>()
+                while (c.moveToNext()) {
+                    val id = c.getInt(0)
+                    val norm = c.getString(1)
+                    nMap[id] = norm
+                    normSetLocal.add(norm)
+                }
+                normById = nMap
+                normSet = normSetLocal
+            }
+            indexReady = true
+        }
+    }
+
+    /** 后台线程构建索引（首屏显示后调用） */
+    suspend fun ensureIndexInBackground() = withContext(Dispatchers.IO) { ensureIndex() }
 
     /**
      * 首次启动时把 assets 中的预构建 dictionary.db 拷贝到应用数据库目录。
@@ -186,6 +203,7 @@ class DictRepository(private val context: Context) {
      * 改进的模糊搜索：3-gram 缩小候选 + 编辑距离归一化排序，避免无关词
      */
     fun fuzzySearch(query: String, maxDist: Int = 2, maxResults: Int = 10): List<Pair<DictEntry, Int>> {
+        ensureIndex()
         val norm = normalize(query)
         if (norm.isEmpty()) return emptyList()
         val db = dbHelper.readableDatabase
@@ -215,6 +233,7 @@ class DictRepository(private val context: Context) {
      * 近似词：3-gram 缩小候选 + 编辑距离较近的词（展示用，阈值宽松）
      */
     fun similarWords(query: String, maxResults: Int = 6): List<DictEntry> {
+        ensureIndex()
         val norm = normalize(query)
         if (norm.isEmpty()) return emptyList()
         val db = dbHelper.readableDatabase

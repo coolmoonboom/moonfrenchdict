@@ -89,11 +89,14 @@ class MainActivity : ComponentActivity() {
                             Text("加载词典中…")
                         }
                         LaunchedEffect(Unit) {
-                            repository.load()
+                            // 只等数据库就绪（首次拷贝 assets / 打开 DB），快速进入界面
+                            repository.ensureReady()
                             // 并行预热法语 TTS，避免进入界面后仍显示"正在初始化"
                             Espeak.setSpeechRate(settings.speechRate)
                             Espeak.ensureInitialized(applicationContext)
                             loaded = true
+                            // 模糊搜索内存索引放到首屏之后后台构建，不阻塞启动
+                            repository.ensureIndexInBackground()
                         }
                     } else {
                         MainTabs(

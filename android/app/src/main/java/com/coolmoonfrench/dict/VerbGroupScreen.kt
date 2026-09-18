@@ -3,7 +3,6 @@ package com.coolmoonfrench.dict
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
@@ -26,8 +25,7 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
         Espeak.ensureInitialized(context)
     }
 
-    SelectionContainer {
-        LazyColumn(
+    LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {
@@ -158,7 +156,6 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
                 }
             }
         }
-    }
     }
 
     // 变位弹窗
