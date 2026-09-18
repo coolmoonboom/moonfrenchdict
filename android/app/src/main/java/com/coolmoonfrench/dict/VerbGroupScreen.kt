@@ -90,23 +90,17 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
                     .padding(horizontal = 12.dp, vertical = 3.dp)
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            family.name,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            family.example,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            maxLines = 1
-                        )
-                    }
+                    Text(
+                        family.name,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        family.example,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
                     Spacer(Modifier.height(2.dp))
                     Text(
                         family.description,
