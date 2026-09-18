@@ -56,7 +56,7 @@ object Espeak {
 
     private var tts: OfflineTts? = null
 
-    /** 朗读语速倍率（0.75 ~ 1.5，默认 1.0）。Piper 引擎 speed 参数，1.0 为正常语速。 */
+    /** 朗读语速倍率（0.25 ~ 1.5，默认 1.0）。Piper 引擎 speed 参数，1.0 为正常语速。 */
     @Volatile
     var speechRate: Float = 1f
         private set
@@ -69,7 +69,7 @@ object Espeak {
     private var audioTrack: AudioTrack? = null
 
     fun setSpeechRate(v: Float) {
-        speechRate = v.coerceIn(0.75f, 1.5f)
+        speechRate = v.coerceIn(0.25f, 1.5f)
     }
 
     fun state(): State = state
@@ -242,7 +242,7 @@ object Espeak {
                 ensureEngineReady(onError)
 
                 // 语速：Piper 的 speed 参数，1.0 = 正常，>1 快，<1 慢
-                val speed = speechRate.coerceIn(0.75f, 1.5f)
+                val speed = speechRate.coerceIn(0.25f, 1.5f)
                 val bytes = synthesizePcm(text, speed)
                 ensureActive()
                 if (bytes == null || bytes.isEmpty()) {
@@ -306,7 +306,7 @@ object Espeak {
         withContext(Dispatchers.IO) {
             if (state != State.READY) return@withContext null
             try {
-                val bytes = synthesizePcm(text, speechRate.coerceIn(0.75f, 1.5f)) ?: run {
+                val bytes = synthesizePcm(text, speechRate.coerceIn(0.25f, 1.5f)) ?: run {
                     lastError = "合成失败(空 PCM)"
                     return@withContext null
                 }

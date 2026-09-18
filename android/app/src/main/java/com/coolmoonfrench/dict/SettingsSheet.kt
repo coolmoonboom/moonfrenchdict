@@ -133,18 +133,20 @@ fun SettingsSheet(
 
             // 朗读语速
             Text("朗读语速", fontWeight = FontWeight.Medium, fontSize = 15.sp, modifier = Modifier.padding(top = 8.dp))
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("慢", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Slider(
-                    value = settings.speechRate,
-                    onValueChange = { settings.updateSpeechRate(it) },
-                    valueRange = 0.75f..1.5f,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                )
-                Text("快", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(vertical = 4.dp)
+            ) {
+                AppSettings.SPEECH_RATE_OPTIONS.forEach { rate ->
+                    FilterChip(
+                        selected = settings.speechRate == rate,
+                        onClick = { settings.updateSpeechRate(rate) },
+                        label = { Text("x${formatRate(rate)}") }
+                    )
+                }
             }
             Text(
-                "当前：${((settings.speechRate * 100).roundToInt())}%",
+                "当前：x${formatRate(settings.speechRate)}",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 12.dp)
@@ -152,3 +154,7 @@ fun SettingsSheet(
         }
     }
 }
+
+/** 语速倍率标签：1.0 -> "1"，0.5 -> "0.5"。 */
+private fun formatRate(rate: Float): String =
+    if (rate % 1f == 0f) rate.toInt().toString() else rate.toString()

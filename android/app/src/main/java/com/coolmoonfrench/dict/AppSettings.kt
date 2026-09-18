@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlin.math.abs
 
 /**
  * 全局应用设置持久化：
@@ -29,8 +30,8 @@ class AppSettings(context: Context) {
     var debugLogEnabled by mutableStateOf(prefs.getBoolean("debug_log", false))
         private set
 
-    /** 朗读语速倍率（0.75 ~ 1.5，默认 1.0） */
-    var speechRate by mutableFloatStateOf(prefs.getFloat("speech_rate", 1f))
+    /** 朗读语速倍率（0.25 / 0.5 / 0.75 / 1.0 四档，默认 1.0） */
+    var speechRate by mutableFloatStateOf(snapSpeechRate(prefs.getFloat("speech_rate", 1f)))
         private set
 
     /** 自动同步间隔（小时，0=关闭，仅手动同步） */
@@ -66,9 +67,18 @@ class AppSettings(context: Context) {
     }
 
     fun updateSpeechRate(v: Float) {
-        val clamped = v.coerceIn(0.75f, 1.5f)
-        speechRate = clamped
-        prefs.edit().putFloat("speech_rate", clamped).apply()
-        Espeak.setSpeechRate(clamped)
+        val snapped = snapSpeechRate(v)
+        speechRate = snapped
+        prefs.edit().putFloat("speech_rate", snapped).apply()
+        Espeak.setSpeechRate(snapped)
+    }
+
+    companion object {
+        /** 可选的朗读语速档位（倍率），UI 按此顺序展示。 */
+        val SPEECH_RATE_OPTIONS = listOf(0.25f, 0.5f, 0.75f, 1f)
+
+        /** 吸附到最近的合法档位，避免历史遗留值落在档位之间导致 UI 无选中项。 */
+        private fun snapSpeechRate(v: Float): Float =
+            SPEECH_RATE_OPTIONS.minByOrNull { abs(it - v) } ?: 1f
     }
 }
