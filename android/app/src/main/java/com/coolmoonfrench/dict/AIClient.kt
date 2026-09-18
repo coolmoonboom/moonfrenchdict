@@ -1,14 +1,21 @@
 package com.coolmoonfrench.dict
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 object AIClient {
 
@@ -120,12 +127,35 @@ object AIClient {
             else -> reqBuilder.header("Authorization", "Bearer ${config.apiToken}")
         }
 
-        val resp = client.newCall(reqBuilder.build()).execute()
-        val text = resp.body?.string() ?: ""
-        if (!resp.isSuccessful) {
-            throw RuntimeException("HTTP ${resp.code}: ${text.take(300)}")
+        val call = client.newCall(reqBuilder.build())
+        // 用 enqueue + suspendCancellableCoroutine 替换阻塞的 execute()，
+        // 使协程取消（用户点停止）能立刻 call.cancel() 中断网络请求，而非等读超时。
+        return@withContext suspendCancellableCoroutine { cont ->
+            cont.invokeOnCancellation { runCatching { call.cancel() } }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (!cont.isCancelled) cont.resumeWithException(e)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    response.use { resp ->
+                        val body = resp.body?.string() ?: ""
+                        if (cont.isCancelled) return
+                        if (!resp.isSuccessful) {
+                            cont.resumeWithException(RuntimeException("HTTP ${resp.code}: ${body.take(300)}"))
+                            return
+                        }
+                        val reply = try {
+                            parseReply(config.interfaceType, body)
+                        } catch (e: Exception) {
+                            cont.resumeWithException(e)
+                            return
+                        }
+                        cont.resume(reply)
+                    }
+                }
+            })
         }
-        parseReply(config.interfaceType, text)
     }
 
     private fun buildWebContextPrompt(webContext: String): String {

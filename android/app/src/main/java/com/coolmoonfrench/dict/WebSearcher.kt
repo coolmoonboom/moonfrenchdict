@@ -1,11 +1,18 @@
 package com.coolmoonfrench.dict
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 data class WebResult(
     val title: String,
@@ -29,7 +36,7 @@ object WebSearcher {
     private val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
-    /** 搜索并返回最多 maxResults 条结果片段。失败时返回空列表。 */
+    /** 搜索并返回最多 maxResults 条结果片段。失败时返回空列表。可被协程取消即时中断。 */
     suspend fun search(query: String, maxResults: Int = 5): List<WebResult> = withContext(Dispatchers.IO) {
         try {
             val encoded = URLEncoder.encode(query, "UTF-8")
@@ -38,13 +45,34 @@ object WebSearcher {
                 .header("User-Agent", UA)
                 .get()
                 .build()
-            val resp = client.newCall(request).execute()
-            if (!resp.isSuccessful) {
-                resp.close()
-                return@withContext emptyList()
-            }
-            val html = resp.body?.string() ?: return@withContext emptyList()
+            val call = client.newCall(request)
+            // enqueue + suspendCancellableCoroutine：协程取消时立即 call.cancel()，无需等读超时
+            val html = suspendCancellableCoroutine<String?> { cont ->
+                cont.invokeOnCancellation { runCatching { call.cancel() } }
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        if (!cont.isCancelled) cont.resume(null)
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        response.use { resp ->
+                            if (!resp.isSuccessful) {
+                                if (!cont.isCancelled) cont.resume(null)
+                                return
+                            }
+                            val body = try {
+                                resp.body?.string()
+                            } catch (_: Exception) {
+                                null
+                            }
+                            if (!cont.isCancelled) cont.resume(body)
+                        }
+                    }
+                })
+            } ?: return@withContext emptyList()
             parseResults(html, maxResults)
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             emptyList()
         }

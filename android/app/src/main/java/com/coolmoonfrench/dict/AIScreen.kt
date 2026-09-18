@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,7 +50,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -68,6 +71,7 @@ fun AIScreen(
     var messages by remember { mutableStateOf(prefs.loadMessages()) }
     var input by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
+    var sendJob by remember { mutableStateOf<Job?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var dataReady by remember { mutableStateOf(false) }
@@ -117,6 +121,8 @@ fun AIScreen(
         dataReady = true
         input = ""
         error = null
+        sendJob?.cancel()
+        sendJob = null
         loading = false
         showClearConfirm = false
     }
@@ -162,7 +168,7 @@ fun AIScreen(
         pendingAttachments = emptyList()
         loading = true
         error = null
-        scope.launch {
+        sendJob = scope.launch {
             try {
                 val reply = if (webSearchEnabled) {
                     val results = WebSearcher.search(q.trim())
@@ -176,12 +182,23 @@ fun AIScreen(
                     AIClient.chat(currentConfig, newList)
                 }
                 save(newList + AIMessage(role = "assistant", content = reply))
+            } catch (e: CancellationException) {
+                // 用户点了停止：静默结束，保留已发送的用户消息
             } catch (e: Exception) {
                 error = "请求失败：${e.message?.take(120) ?: "未知错误"}"
             } finally {
-                loading = false
+                if (coroutineContext[Job] === sendJob) {
+                    loading = false
+                    sendJob = null
+                }
             }
         }
+    }
+
+    fun stopGeneration() {
+        sendJob?.cancel()
+        sendJob = null
+        loading = false
     }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -274,6 +291,9 @@ fun AIScreen(
                 activeId = activeConvId,
                 onDismiss = { showConversations = false },
                 onSwitch = { id ->
+                    sendJob?.cancel()
+                    sendJob = null
+                    loading = false
                     prefs.setActiveConversationId(id)
                     activeConvId = id
                     messages = prefs.loadMessages()
@@ -284,6 +304,9 @@ fun AIScreen(
                     showConversations = false
                 },
                 onDelete = { id ->
+                    sendJob?.cancel()
+                    sendJob = null
+                    loading = false
                     prefs.deleteConversation(id)
                     activeConvId = prefs.activeConversationId()
                     conversations = prefs.loadConversations()
@@ -579,12 +602,27 @@ fun AIScreen(
                         )
                     }
                     Spacer(Modifier.width(6.dp))
-                    FilledIconButton(
-                        onClick = { sendQuestion(input, pendingAttachments) },
-                        enabled = hasConfig && (input.isNotBlank() || pendingAttachments.isNotEmpty()) && !loading,
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
+                    if (loading) {
+                        // AI 思考/回答中：发送键变为红色的停止键，点击立即中断请求
+                        FilledIconButton(
+                            onClick = { stopGeneration() },
+                            enabled = hasConfig,
+                            modifier = Modifier.size(48.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError
+                            )
+                        ) {
+                            Icon(Icons.Filled.Stop, contentDescription = "停止生成")
+                        }
+                    } else {
+                        FilledIconButton(
+                            onClick = { sendQuestion(input, pendingAttachments) },
+                            enabled = hasConfig && (input.isNotBlank() || pendingAttachments.isNotEmpty()),
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "发送")
+                        }
                     }
                 }
             }
