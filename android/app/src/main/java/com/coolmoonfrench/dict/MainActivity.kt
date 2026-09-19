@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.School
@@ -131,6 +132,7 @@ fun MainTabs(
     var aiRefreshKey by remember { mutableStateOf(0) }
     var showQuestionTypes by remember { mutableStateOf(false) }
     var showVideoImport by remember { mutableStateOf(false) }
+    var showPhonetics by remember { mutableStateOf(false) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -211,6 +213,14 @@ fun MainTabs(
                     onClick = {
                         scope.launch { drawerState.close() }
                         showPronouns = true
+                    }
+                )
+                DrawerItem(
+                    icon = Icons.Filled.RecordVoiceOver,
+                    label = "字母音标表",
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        showPhonetics = true
                     }
                 )
                 DrawerItem(
@@ -403,6 +413,16 @@ fun MainTabs(
         }
     }
 
+    // 字母音标表
+    if (showPhonetics) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            PhoneticsScreen(onBack = { showPhonetics = false })
+        }
+    }
+
     // 问句类型
     if (showQuestionTypes) {
         Surface(
@@ -440,6 +460,7 @@ fun MainTabs(
     BackHandler(enabled = showHistory) { showHistory = false }
     BackHandler(enabled = showGrammar) { showGrammar = false }
     BackHandler(enabled = showPronouns) { showPronouns = false }
+    BackHandler(enabled = showPhonetics) { showPhonetics = false }
     BackHandler(enabled = showQuestionTypes) { showQuestionTypes = false }
     BackHandler(enabled = showVideoImport) { showVideoImport = false }
 
