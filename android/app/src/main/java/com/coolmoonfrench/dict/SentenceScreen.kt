@@ -79,6 +79,84 @@ private fun parseAIWords(reply: String): List<AIWordMeaning>? {
     }
 }
 
+/** 在线查词得到的同根词 */
+data class OnlineRelatedWord(
+    val word: String,
+    val pos: String,
+    val meaning: String
+)
+
+/** AI 在线查词结果（本地词库未收录时使用），字段与本地词卡展示保持一致 */
+data class OnlineWordInfo(
+    val word: String,
+    val pos: String,
+    val meaning: String,
+    val number: String,
+    val infinitive: String,
+    val related: List<OnlineRelatedWord>
+)
+
+/** 构造单个单词的在线查词提示词，要求返回结构化 JSON 对象 */
+private fun buildOnlineWordPrompt(word: String): String {
+    return """
+请解析法语单词 "$word"，返回一个 JSON 对象。字段要求：
+- "word": 原词形
+- "pos": 词性（法语缩写，如 adj.&pron.、nom、verbe、adv.、prép.、conj. 等）
+- "meaning": 中文释义（简洁，1-2 句）
+- "number": 单复数，取值 单数 / 复数 / —
+- "infinitive": 若为动词则给出原形，否则空字符串
+- "related": 同根词族数组，每项为 {"word":"...","pos":"...","meaning":"..."}，最多 5 个；没有则空数组
+
+要求：只返回 JSON 对象本身，不要用 Markdown 代码块包裹，不要有任何额外文字。
+""".trimIndent()
+}
+
+/** 解析在线查词返回的 JSON 对象（容错：剥离代码块、取第一个 {...}） */
+private fun parseOnlineWord(reply: String): OnlineWordInfo? {
+    val cleaned = reply.trim()
+        .removePrefix("```json").removePrefix("```")
+        .removeSuffix("```").trim()
+    val start = cleaned.indexOf('{')
+    val end = cleaned.lastIndexOf('}')
+    if (start < 0 || end <= start) return null
+    return try {
+        val o = JSONObject(cleaned.substring(start, end + 1))
+        val related = mutableListOf<OnlineRelatedWord>()
+        o.optJSONArray("related")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val r = arr.optJSONObject(i) ?: continue
+                val w = r.optString("word", "")
+                if (w.isNotBlank()) {
+                    related.add(
+                        OnlineRelatedWord(
+                            word = w,
+                            pos = r.optString("pos", ""),
+                            meaning = r.optString("meaning", "")
+                        )
+                    )
+                }
+            }
+        }
+        OnlineWordInfo(
+            word = o.optString("word", ""),
+            pos = o.optString("pos", ""),
+            meaning = o.optString("meaning", ""),
+            number = o.optString("number", ""),
+            infinitive = o.optString("infinitive", ""),
+            related = related
+        )
+    } catch (e: Exception) {
+        null
+    }
+}
+
+/** 组装带词性前缀的在线释义，与本地词库展示格式一致（如「【adj.】…」） */
+private fun onlineMeaningWithPos(info: OnlineWordInfo): String {
+    val m = info.meaning.trim()
+    if (m.isEmpty()) return ""
+    return if (info.pos.isNotBlank()) "【${info.pos}】$m" else m
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SentenceScreen(
@@ -467,7 +545,7 @@ fun SentenceScreen(
             // 逐词分析卡片
             if (result != null) {
                 items(result) { wa ->
-                    WordCard(wa, repository, conjugator, context)
+                    WordCard(wa, repository, conjugator, context, aiPrefs)
                 }
             }
             }
@@ -534,9 +612,49 @@ private fun WordCard(
     wa: WordAnalysis,
     repository: DictRepository,
     conjugator: VerbConjugator,
-    context: Context
+    context: Context,
+    aiPrefs: AIPreferences?
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var online by remember(wa.word) { mutableStateOf<OnlineWordInfo?>(null) }
+    var onlineLoading by remember(wa.word) { mutableStateOf(false) }
+    var onlineError by remember(wa.word) { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    // 本地词库未收录时，用 AI 在线查词补齐同卡片字段
+    fun doOnlineLookup() {
+        if (onlineLoading) return
+        val config = aiPrefs?.modelConfig
+        if (config == null || config.apiUrl.isBlank() || config.apiToken.isBlank() || config.modelName.isBlank()) {
+            onlineError = "请先在 AI 设置中配置大模型"
+            return
+        }
+        onlineLoading = true
+        onlineError = null
+        scope.launch {
+            try {
+                val reply = AIClient.chat(config, listOf(AIMessage("user", buildOnlineWordPrompt(wa.word))))
+                val info = parseOnlineWord(reply)
+                if (info == null || (info.meaning.isBlank() && info.pos.isBlank())) {
+                    onlineError = "在线查词未返回有效结果"
+                } else {
+                    online = info
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onlineError = "在线查词失败：${e.message?.take(120) ?: "未知错误"}"
+            } finally {
+                onlineLoading = false
+            }
+        }
+    }
+
+    val onlineInfo = online
+    val effPos = onlineInfo?.pos?.takeIf { it.isNotBlank() } ?: wa.pos
+    val effInfinitive = onlineInfo?.infinitive?.takeIf { it.isNotBlank() } ?: wa.infinitive
+    val effMeaning = if (onlineInfo != null) onlineMeaningWithPos(onlineInfo) else wa.meaning
+    val effNumber = onlineInfo?.number?.takeIf { it.isNotBlank() && it != "—" } ?: wa.number
 
     Card(
         modifier = Modifier
@@ -567,13 +685,13 @@ private fun WordCard(
                     fontSize = 18.sp,
                     modifier = Modifier.weight(1f)
                 )
-                if (wa.pos.isNotEmpty()) {
+                if (effPos.isNotEmpty()) {
                     Surface(
                         shape = MaterialTheme.shapes.small,
                         color = MaterialTheme.colorScheme.tertiaryContainer
                     ) {
                         Text(
-                            wa.pos,
+                            effPos,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                             color = MaterialTheme.colorScheme.onTertiaryContainer,
                             fontSize = 11.sp
@@ -608,7 +726,7 @@ private fun WordCard(
             }
 
             // 原形 + 释义
-            if (wa.infinitive.isNotEmpty() || wa.meaning.isNotEmpty()) {
+            if (effInfinitive.isNotEmpty() || effMeaning.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -616,12 +734,12 @@ private fun WordCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
-                    if (wa.infinitive.isNotEmpty()) {
-                        Text(wa.infinitive, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    if (effInfinitive.isNotEmpty()) {
+                        Text(effInfinitive, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         Text(" · ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                     }
                     Text(
-                        wa.meaning,
+                        effMeaning,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp,
                         maxLines = if (expanded) Int.MAX_VALUE else 2,
@@ -648,30 +766,69 @@ private fun WordCard(
                 Text(wa.notes, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             }
 
-            if (wa.number.isNotEmpty()) {
+            if (effNumber.isNotEmpty()) {
                 Text(
-                    "数: ${wa.number}",
+                    "数: $effNumber",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp
                 )
             }
 
-            // 本地词库未收录提示
-            if (!wa.inDictionary && wa.infinitive.isEmpty()) {
+            // 本地词库未收录提示 + AI 在线查词按钮
+            if (!wa.inDictionary && wa.infinitive.isEmpty() && onlineInfo == null) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "本地词库未收录，可尝试在线查询",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { doOnlineLookup() }, enabled = !onlineLoading) {
+                        if (onlineLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        Text(if (onlineLoading) "查询中…" else "AI 查词", fontSize = 12.sp)
+                    }
+                }
+            }
+            if (onlineInfo != null) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "本地词库未收录，可尝试在线查询…",
-                    color = MaterialTheme.colorScheme.error,
-                    fontSize = 12.sp
+                    "来源：AI 在线查词",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 11.sp
                 )
             }
+            if (onlineError != null) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        onlineError!!,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { doOnlineLookup() }, enabled = !onlineLoading) {
+                        Text("重试", fontSize = 12.sp)
+                    }
+                }
+            }
 
-            // 同根词族 + 查词按钮
+            // 同根词族
             val related = remember(wa.word) { repository.relatedWords(wa.word).take(4) }
-            if (related.isNotEmpty()) {
+            val relatedText = if (onlineInfo != null) {
+                onlineInfo.related.take(4).joinToString(" / ") {
+                    "${it.word} ${if (it.pos.isNotBlank()) "【${it.pos}】" else ""}${it.meaning}"
+                }
+            } else {
+                related.joinToString(" / ") { "${it.word} ${it.meaning.take(12)}" }
+            }
+            if (relatedText.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "同根词族：${related.joinToString(" / ") { "${it.word} ${it.meaning.take(12)}" }}",
+                    "同根词族：$relatedText",
                     color = MaterialTheme.colorScheme.primary,
                     fontSize = 12.sp,
                     maxLines = 1,
@@ -690,7 +847,7 @@ private fun WordCard(
                         fontSize = 12.sp
                     )
                 }
-                val conjug = if (wa.infinitive.isNotEmpty()) conjugator.conjugate(wa.infinitive) else null
+                val conjug = if (effInfinitive.isNotEmpty()) conjugator.conjugate(effInfinitive) else null
                 if (conjug != null) {
                     Spacer(Modifier.height(4.dp))
                     Text(
