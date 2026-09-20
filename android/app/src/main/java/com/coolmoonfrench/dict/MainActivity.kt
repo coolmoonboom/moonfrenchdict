@@ -321,7 +321,7 @@ fun MainTabs(
                     LookupScreen(repository, translator, conjugator, morphology, settings, aiPrefs)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 2) 1f else 0f).zIndex(if (selected == 2) 1f else 0f)) {
-                    ConjugationScreen(conjugator, repository, translator, morphology)
+                    ConjugationScreen(conjugator, repository, translator, morphology, aiPrefs)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 3) 1f else 0f).zIndex(if (selected == 3) 1f else 0f)) {
                     VerbGroupScreen(conjugator)

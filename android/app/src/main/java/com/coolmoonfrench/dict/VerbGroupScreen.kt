@@ -113,12 +113,21 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
                             modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                v,
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 14.sp,
-                                modifier = Modifier.width(140.dp)
-                            )
+                            Column(modifier = Modifier.width(150.dp)) {
+                                Text(
+                                    v,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 14.sp
+                                )
+                                val ipa = FrenchIpa.wrap(v)
+                                if (ipa.isNotEmpty()) {
+                                    Text(
+                                        ipa,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
                             Text(
                                 meaning,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -157,7 +166,10 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
         val c = conjugator.conjugate(verb)
         AlertDialog(
             onDismissRequest = { selectedFamily = null },
-            title = { Text(verb) },
+            title = {
+                val ipa = FrenchIpa.wrap(verb)
+                Text(if (ipa.isEmpty()) verb else "$verb  $ipa")
+            },
             text = {
                 if (c == null) {
                     Text("无法生成变位")

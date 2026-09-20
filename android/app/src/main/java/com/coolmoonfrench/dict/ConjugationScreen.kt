@@ -3,6 +3,7 @@ package com.coolmoonfrench.dict
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 private val SUBJECTS = listOf("je", "tu", "il/elle", "nous", "vous", "ils/elles")
@@ -31,7 +33,8 @@ fun ConjugationScreen(
     conjugator: VerbConjugator,
     repository: DictRepository,
     translator: MyMemoryTranslator,
-    morphology: MorphologyAnalyzer
+    morphology: MorphologyAnalyzer,
+    aiPrefs: AIPreferences
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var conj by remember { mutableStateOf<Conjugation?>(null) }
@@ -39,25 +42,55 @@ fun ConjugationScreen(
     var pronominalConj by remember { mutableStateOf<Conjugation?>(null) }
     var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
     var meaning by remember { mutableStateOf("") }
-    var onlineMeaning by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var selectedTab by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(false) }
-    var onlineError by remember { mutableStateOf<String?>(null) }
     var foundInfinitive by remember { mutableStateOf<String?>(null) }
+    var aiInfo by remember { mutableStateOf<AiWordInfo?>(null) }
+    var aiError by remember { mutableStateOf<String?>(null) }
+    var aiLoading by remember { mutableStateOf(false) }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // 预热 Mimic 法语 TTS（幂等，非阻塞）
+    // 预热法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
         Speech.ensureInitialized(context)
     }
 
+    /** 用大模型查询单词的中文释义与音标；带取消，保证新输入能立即打断旧请求。 */
+    fun runAiWordSearch(word: String) {
+        val config = aiPrefs.modelConfig
+        if (!IpaService.isConfigured(config)) {
+            aiError = "未配置 AI 模型，无法在线查询"
+            return
+        }
+        searchJob?.cancel()
+        aiLoading = true
+        aiError = null
+        searchJob = scope.launch {
+            try {
+                aiInfo = AiWordSearch.search(config, word)
+                if (aiInfo == null) aiError = "未查询到该词的释义"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                aiError = "查询失败：${e.message?.take(100) ?: "未知错误"}"
+            } finally {
+                aiLoading = false
+            }
+        }
+    }
+
     fun doSearch(q: String) {
         query = q
-        onlineMeaning = null
+        // 取消上一轮在线查询，避免旧请求返回后覆盖新结果
+        searchJob?.cancel()
+        searchJob = null
         loading = false
-        onlineError = null
+        aiInfo = null
+        aiError = null
+        aiLoading = false
         if (q.isBlank()) {
             conj = null; passive = null; pronominalConj = null
             breakdown = null; meaning = ""; error = null; foundInfinitive = null
@@ -117,7 +150,7 @@ fun ConjugationScreen(
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline
                 )
             )
-            Button(onClick = { /* doSearch 已在 onValueChange 触发 */ }) {
+            Button(onClick = { doSearch(query) }) {
                 Text("变位")
             }
         }
@@ -127,37 +160,45 @@ fun ConjugationScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(error!!, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick = {
-                        loading = true
-                        onlineError = null
-                        scope.launch {
-                            try {
-                                onlineMeaning = translator.translate(query)?.translatedText
-                                if (onlineMeaning == null) {
-                                    onlineError = "联网查词失败，请检查网络后重试"
+                    Button(
+                        onClick = { runAiWordSearch(query) },
+                        enabled = !aiLoading
+                    ) {
+                        Text(if (aiLoading) "AI 查询中…" else "AI 查词")
+                    }
+                    aiInfo?.let { info ->
+                        Spacer(Modifier.height(12.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { Espeak.speakWithFeedback(context, info.word, deterministic = true) },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.VolumeUp,
+                                            contentDescription = "朗读 ${info.word}",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Text(info.word, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                    if (info.ipa.isNotBlank()) {
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(info.ipa, fontSize = 15.sp, color = MaterialTheme.colorScheme.primary)
+                                    }
                                 }
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                onlineError = "联网查词失败：${e.message?.take(120) ?: "未知错误"}"
-                            } finally {
-                                loading = false
+                                Spacer(Modifier.height(6.dp))
+                                Text("AI 释义", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(info.meaning, fontSize = 14.sp)
                             }
                         }
-                    }) {
-                        Text(if (loading) "翻译中…" else "联网查词")
                     }
-                    onlineMeaning?.let {
+                    if (aiError != null) {
                         Spacer(Modifier.height(8.dp))
-                        Text(it)
-                    }
-                    if (onlineError != null) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            onlineError!!,
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 13.sp
-                        )
+                        Text(aiError!!, color = MaterialTheme.colorScheme.error, fontSize = 13.sp)
                     }
                 }
             }
@@ -165,10 +206,12 @@ fun ConjugationScreen(
         }
 
         conj?.let { c ->
-            // 自动补中文释义
+            // 词典无中文释义时用 AI 补全（生僻动词）
             LaunchedEffect(c.infinitive) {
-                if (onlineMeaning == null && meaning.isNotEmpty() && !hasChinese(meaning)) {
-                    onlineMeaning = translator.translate(c.infinitive)?.translatedText
+                aiInfo = null
+                aiError = null
+                if (!hasChinese(meaning)) {
+                    runAiWordSearch(c.infinitive)
                 }
             }
 
@@ -178,6 +221,9 @@ fun ConjugationScreen(
             ) {
                 // 动词卡片
                 item {
+                    val displayForm = if (foundInfinitive != null) query.trim() else c.infinitive
+                    val displayIpa = FrenchIpa.wrap(displayForm)
+                    val infinitiveIpa = FrenchIpa.wrap(c.infinitive)
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
@@ -187,31 +233,42 @@ fun ConjugationScreen(
                                 IconButton(
                                     onClick = {
                                         Speech.ensureInitialized(context)
-                                        Speech.speakWithFeedback(context, c.infinitive)
+                                        Speech.speakWithFeedback(context, displayForm)
                                     },
                                     modifier = Modifier.size(40.dp)
                                 ) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.VolumeUp,
-                                        contentDescription = "朗读 ${c.infinitive}",
+                                        contentDescription = "朗读 $displayForm",
                                         tint = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 }
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(c.infinitive, fontSize = 24.sp, fontWeight = FontWeight.Bold,
+                                    Text(displayForm, fontSize = 24.sp, fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                    if (foundInfinitive != null) {
-                                        Text("→ 原形：${c.infinitive}", fontSize = 13.sp,
+                                    if (displayIpa.isNotEmpty()) {
+                                        Text("音标 $displayIpa", fontSize = 14.sp,
                                             color = MaterialTheme.colorScheme.primary)
                                     }
-                                    Spacer(Modifier.height(4.dp))
-                                    if (meaning.isNotEmpty()) {
-                                        Text(meaning, fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                                    if (foundInfinitive != null) {
+                                        Text(
+                                            "原形：${c.infinitive}" + if (infinitiveIpa.isNotEmpty()) "  $infinitiveIpa" else "",
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
                                     }
-                                    onlineMeaning?.let {
-                                        Text("中文（联网）：$it", fontSize = 14.sp,
+                                    Spacer(Modifier.height(4.dp))
+                                    when {
+                                        meaning.isNotEmpty() -> Text(meaning, fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                                        aiLoading -> Text("中文释义查询中……", fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                                        aiInfo != null -> Text(
+                                            "AI：${aiInfo!!.meaning}" + if (aiInfo!!.ipa.isNotBlank()) "  ${aiInfo!!.ipa}" else "",
+                                            fontSize = 14.sp,
                                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f))
+                                        aiError != null -> Text(aiError!!, fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
                                     }
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
@@ -293,18 +350,18 @@ fun ConjugationScreen(
                     }
                 }
 
-                // 三按钮切换
+                // 语态 / 所有发音切换
                 item {
                     Spacer(Modifier.height(6.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("主动语态", "被动语态", "代动词语态").forEachIndexed { i, label ->
+                        listOf("主动", "被动", "代动词", "所有发音").forEachIndexed { i, label ->
                             FilterChip(
                                 selected = selectedTab == i,
                                 onClick = { selectedTab = i },
-                                label = { Text(label, fontSize = 13.sp) },
+                                label = { Text(label, fontSize = 12.sp) },
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -312,7 +369,7 @@ fun ConjugationScreen(
                     Spacer(Modifier.height(6.dp))
                 }
 
-                // 根据选中 Tab 显示对应时态
+                // 根据选中 Tab 显示对应内容
                 when (selectedTab) {
                     0 -> { // 主动语态
                         item { SectionTitle("主动语态") }
@@ -332,6 +389,9 @@ fun ConjugationScreen(
                             item { SectionTitle("代动词语态（se + 动词）") }
                             PronominalTenses(pc, context)
                         }
+                    }
+                    3 -> { // 所有发音
+                        AllPronunciations(c, context)
                     }
                 }
             }
@@ -477,6 +537,69 @@ private fun LazyListScope.PronominalTenses(pc: Conjugation, context: Context) {
     item { TenseRow("条件式过去时", "Conditionnel passé", compoundConditionnel(pc), PRONOM_SUBJECTS, context) }
     item { TenseRow("虚拟式过去时", "Subjonctif passé", compoundSubjonctif(pc), PRONOM_SUBJECTS, context) }
     item { TenseRow("虚拟式愈过去时", "Subjonctif plus-que-parfait", compoundSubjonctifImparfait(pc), PRONOM_SUBJECTS, context) }
+}
+
+// ---------------------------------------------------------------------------
+// 所有发音（第四页）
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun PronGroupRow(group: PronGroup, context: Context) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = { Espeak.speakWithFeedback(context, group.forms.first(), deterministic = true) }
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = "朗读 ${group.forms.first()}",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text("/${group.ipa}/", fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    group.forms.joinToString("、"),
+                    fontSize = 13.sp,
+                    modifier = Modifier.clickable {
+                        Espeak.speakWithFeedback(context, group.forms.first(), deterministic = true)
+                    }
+                )
+            }
+        }
+    }
+}
+
+private fun LazyListScope.AllPronunciations(c: Conjugation, context: Context) {
+    item {
+        SectionTitle("所有发音（按读音分组）")
+    }
+    item {
+        Text(
+            "同一行的拼写形式读音相同。点击 🔊 可朗读该组读音（本地法语语音）。",
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+    }
+    val groups = Pronunciations.groupsOf(c)
+    if (groups.isEmpty()) {
+        item {
+            Text("暂无可发音的单词形式", modifier = Modifier.padding(12.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    } else {
+        items(groups) { g -> PronGroupRow(g, context) }
+    }
 }
 
 // 复合时态生成函数

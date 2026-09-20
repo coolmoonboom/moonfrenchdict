@@ -111,3 +111,11 @@ Entries discovered by the Agent during task execution should follow this format:
   - `gh release create/upload` 必须在 git 仓库目录内执行（gh 依赖 .git 上下文），APK 资产从 /tmp 用 `path#display-name.apk` 语法引用；APK 用 release 号命名（french_dict_v1.0.26.apk）。
   - 构建 daemon 内存：gradle 堆 -Xmx3G + kotlin.daemon.jvmargs -Xmx768m + `--no-daemon --max-workers=2`，terminal memory_percent 70（peak ~4.5G）可稳定跑完含 R8 的 release 构建；-Xmx2G 或并行 worker 过多会触发 cgroup OOM 杀掉 daemon。
 
+[Project Knowledge Summary]
+- Date: 2026-09-20
+- Context: Discovered while rebuilding the APK to replace an existing release asset without bumping the version
+- Category: Operations & Deployment
+- Instructions:
+  - 需要「不刷版本号、直接替换最新 release 的包」时：`gh release list` 取 Latest tag（当前 v1.0.26），构建新包后 `gh release upload <tag> "/tmp/<apk-name>.apk" --clobber`。资产名取路径 basename，`--clobber` 覆盖同名旧包；必须在仓库目录内执行，命令成功退出码 0（可能无 stdout）。
+  - Release 构建命令：`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/opt/android-sdk ANDROID_SDK_ROOT=/opt/android-sdk /opt/gradle-9.3.1/bin/gradle :app:assembleRelease --no-daemon --max-workers=2 -Dorg.gradle.jvmargs="-Xmx3G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m" -Dkotlin.daemon.jvmargs="-Xmx768m"`，约 10 分钟；产物 `app/build/outputs/apk/release/app-release.apk`（release 用 debug 签名）。
+
