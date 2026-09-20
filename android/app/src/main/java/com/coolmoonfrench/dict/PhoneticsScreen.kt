@@ -203,7 +203,7 @@ fun PhoneticsScreen(onBack: () -> Unit) {
     val scrollState = rememberScrollState()
 
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
     LaunchedEffect(selectedTab) {
         scrollState.scrollTo(0)
@@ -329,8 +329,8 @@ private fun PhonemeCell(context: Context, item: PhonemeItem, modifier: Modifier)
             )
             IconButton(
                 onClick = {
-                    Espeak.ensureInitialized(context)
-                    Espeak.speakWithFeedback(context, item.speak)
+                    Speech.ensureInitialized(context)
+                    Speech.speakWithFeedback(context, item.speak)
                 },
                 modifier = Modifier.size(24.dp)
             ) {

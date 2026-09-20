@@ -13,11 +13,13 @@ android {
         applicationId = "com.coolmoonfrench.dict"
         minSdk = 24
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.0.17"
+        versionCode = 18
+        versionName = "1.0.18"
 
+        // ffmpeg-kit 仅提供 arm64/x86_64，32 位设备本就不支持视频转文字；
+        // 去掉 armeabi-v7a 减 37MB。
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
@@ -32,7 +34,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -40,6 +46,18 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    packaging {
+        resources {
+            // bouncycastle(pdfbox 传递依赖)pqc 的 lowmc/sike 属性是签名算法测试向量，
+            // 运行时不会被读取，排除可省 ~4MB。
+            excludes += listOf("org/bouncycastle/pqc/**")
+        }
+        jniLibs {
+            // 压缩存储 native 库，APK 减 60-70MB（安装时解压，设备磁盘占用不变）。
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -73,7 +91,9 @@ dependencies {
     // ffmpeg-kit-maintained 6.0.3 AAR 未声明传递依赖，但 FFmpegKitConfig 引用了 smart-exception-java 的 Exceptions 类，
     // 必须显式声明，否则运行时 NoClassDefFoundError。
     implementation("com.arthenica:smart-exception-java:0.2.1")
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full-gpl:6.0.3")
+    // VideoToText 只用 -vn -ar 16000 -ac 1 -c:a pcm_s16le，min-gpl 含 AAC 解码 / mov,mp4 解封装 / pcm_s16le 编码，
+    // 换 min-gpl 省 arm64 约 17MB。
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-min-gpl:6.0.3")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

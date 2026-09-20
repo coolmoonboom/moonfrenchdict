@@ -22,7 +22,7 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     LazyColumn(
@@ -129,8 +129,8 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
                             // 朗读按钮
                             IconButton(
                                 onClick = {
-                                    Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, v)
+                                    Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, v)
                                 },
                                 modifier = Modifier.size(32.dp)
                             ) {

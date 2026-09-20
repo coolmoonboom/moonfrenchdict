@@ -28,6 +28,27 @@ import kotlinx.coroutines.withContext
 /** 判断释义是否包含中文 */
 internal fun hasChinese(s: String): Boolean = s.any { it in '\u4e00'..'\u9fff' }
 
+/** 省音/缩合形式：如 d'eau = de + eau，l'application = le/la + application */
+internal data class Contraction(val surface: String, val prefix: String, val base: String)
+
+private val CONTRACTION_PREFIXES = mapOf(
+    "d" to "de", "l" to "le/la", "j" to "je", "m" to "me", "n" to "ne",
+    "t" to "tu", "s" to "se", "c" to "ce", "qu" to "que",
+    "jusqu" to "jusque", "lorsqu" to "lorsque", "quoiqu" to "quoique", "presqu" to "presque"
+)
+
+/** 识别冠词/介词与后词的省音缩合，如 d'eau、l'application、qu'il */
+internal fun detectContraction(text: String): Contraction? {
+    val t = text.trim()
+    val idx = t.indexOfFirst { it == '\'' || it == '’' }
+    if (idx <= 0 || idx >= t.length - 1) return null
+    val prefix = t.substring(0, idx).lowercase()
+    val base = t.substring(idx + 1).trim()
+    val full = CONTRACTION_PREFIXES[prefix] ?: return null
+    if (base.isEmpty()) return null
+    return Contraction(t, full, base)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LookupScreen(
@@ -55,21 +76,26 @@ fun LookupScreen(
     var zhError by remember { mutableStateOf<String?>(null) }
     // 实际用于法语查询的词（中文输入时为翻译结果，法语输入时即输入本身）
     var frenchTerm by remember { mutableStateOf("") }
+    // 省音缩合信息（如 d'eau → de + eau）
+    var contractionSurface by remember { mutableStateOf<String?>(null) }
+    var contractionPrefix by remember { mutableStateOf("") }
+    var contractionBase by remember { mutableStateOf("") }
     var favoriteWords by remember { mutableStateOf(emptySet<String>()) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     // 防抖：每次输入取消上一次未完成的搜索，避免卡顿
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
-    /** 用已确定是法语的词执行原有查询流程（精确匹配 / 近似 / 词根 / 派生 / 拆解） */
+    /** 用已确定是法语的词执行原有查询流程（精确匹配 / 缩合 / 近似 / 词根 / 派生 / 拆解） */
     suspend fun searchFrench(fr: String) {
         val exact = withContext(Dispatchers.IO) { repository.lookupExact(fr) }
+        val contraction = if (exact.isEmpty()) detectContraction(fr) else null
         if (exact.isNotEmpty()) {
             withContext(Dispatchers.IO) { repository.addHistory(fr) }
             val first = exact.first()
@@ -81,7 +107,28 @@ fun LookupScreen(
             val bd = withContext(Dispatchers.IO) { morphology.analyze(fr, repository) }
             withContext(Dispatchers.Main) {
                 selected = first
+                contractionSurface = null
                 expansion = if (verb) "动词原形：${first.word}" else null
+                similar = sim
+                related = rel
+                derived = der
+                breakdown = bd
+            }
+        } else if (contraction != null) {
+            // 缩合形式：解析出后词并查询，同时保留缩合形式用于音标（含连诵 ‿）
+            val baseExact = withContext(Dispatchers.IO) { repository.lookupExact(contraction.base) }
+            val first = baseExact.firstOrNull()
+            val verb = first?.let { withContext(Dispatchers.IO) { conjugator.isVerb(it.word) } } ?: false
+            val sim = withContext(Dispatchers.IO) { repository.similarWords(contraction.base) }
+            val rel = withContext(Dispatchers.IO) { repository.relatedWords(contraction.base) }
+            val der = withContext(Dispatchers.IO) { repository.derivedWords(contraction.base) }
+            val bd = withContext(Dispatchers.IO) { morphology.analyze(contraction.base, repository) }
+            withContext(Dispatchers.Main) {
+                selected = first
+                contractionSurface = contraction.surface
+                contractionPrefix = contraction.prefix
+                contractionBase = contraction.base
+                expansion = if (verb) "动词原形：${first?.word}" else null
                 similar = sim
                 related = rel
                 derived = der
@@ -95,6 +142,7 @@ fun LookupScreen(
             val verb = withContext(Dispatchers.IO) { conjugator.isVerb(fr) }
             withContext(Dispatchers.Main) {
                 selected = null
+                contractionSurface = null
                 similar = sim
                 related = rel
                 derived = der
@@ -109,6 +157,9 @@ fun LookupScreen(
         onlineResult = null
         expansion = null
         breakdown = null
+        contractionSurface = null
+        contractionPrefix = ""
+        contractionBase = ""
         loading = false
         translateError = null
         zhError = null
@@ -226,8 +277,8 @@ fun LookupScreen(
                                     Spacer(Modifier.weight(1f))
                                     IconButton(
                                         onClick = {
-                                            Espeak.ensureInitialized(context)
-                                            Espeak.speakWithFeedback(context, zhToFr!!.translatedText)
+                                            Speech.ensureInitialized(context)
+                                            Speech.speakWithFeedback(context, zhToFr!!.translatedText)
                                         },
                                         modifier = Modifier.size(32.dp)
                                     ) {
@@ -246,6 +297,13 @@ fun LookupScreen(
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer
                                 )
+                                Spacer(Modifier.height(2.dp))
+                                IpaLine(
+                                    target = zhToFr!!.translatedText,
+                                    aiPrefs = aiPrefs,
+                                    textColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    fontSize = 14.sp
+                                )
                             }
                         }
                     }
@@ -257,6 +315,105 @@ fun LookupScreen(
                             color = MaterialTheme.colorScheme.error,
                             fontSize = 13.sp
                         )
+                    }
+                }
+
+                // 缩合形式（如 d'eau → de + eau）：展示缩合词形与含连诵的音标
+                if (contractionSurface != null) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = {
+                                            Speech.ensureInitialized(context)
+                                            Speech.speakWithFeedback(context, contractionSurface!!)
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.VolumeUp,
+                                            contentDescription = "朗读缩合形式",
+                                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Text(
+                                        contractionSurface!!,
+                                        fontSize = 22.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                                    )
+                                }
+                                Spacer(Modifier.height(2.dp))
+                                IpaLine(
+                                    target = contractionSurface!!,
+                                    aiPrefs = aiPrefs,
+                                    textColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    fontSize = 15.sp
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "缩合：$contractionPrefix + $contractionBase",
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 无对应词条时的输入音标（法语输入）
+                if (selected == null && zhToFr == null && contractionSurface == null &&
+                    frenchTerm.isNotBlank() && !hasChinese(frenchTerm)
+                ) {
+                    item {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = {
+                                            Speech.ensureInitialized(context)
+                                            Speech.speakWithFeedback(context, frenchTerm)
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.VolumeUp,
+                                            contentDescription = "朗读输入词",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Text(
+                                        frenchTerm,
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Spacer(Modifier.height(2.dp))
+                                IpaLine(
+                                    target = frenchTerm,
+                                    aiPrefs = aiPrefs,
+                                    fontSize = 15.sp
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -276,8 +433,8 @@ fun LookupScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = {
-                                            Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, entry.word)
+                                            Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, entry.word)
                                         }
                                     ) {
                                         Icon(
@@ -307,6 +464,13 @@ fun LookupScreen(
                                         }
                                     }
                                 }
+                                Spacer(Modifier.height(6.dp))
+                                IpaLine(
+                                    target = entry.word,
+                                    aiPrefs = aiPrefs,
+                                    textColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                                    fontSize = 15.sp
+                                )
                                 Spacer(Modifier.height(8.dp))
                                 Text(
                                     text = entry.meaning,

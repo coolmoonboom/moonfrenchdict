@@ -33,7 +33,7 @@ fun GrammarScreen(onExit: () -> Unit) {
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     fun goUp() {
@@ -398,8 +398,8 @@ private fun SectionBlock(section: GrammarSection) {
                     }
                     IconButton(
                         onClick = {
-                            Espeak.ensureInitialized(context)
-                            Espeak.speakWithFeedback(context, example.fr)
+                            Speech.ensureInitialized(context)
+                            Speech.speakWithFeedback(context, example.fr)
                         },
                         modifier = Modifier.size(32.dp)
                     ) {

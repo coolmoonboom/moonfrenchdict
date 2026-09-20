@@ -4,6 +4,12 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- Android 11+ 需要声明 TTS 服务查询，否则系统 TTS 引擎不可见（孤立词朗读会回退 Piper） -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
     <application
         android:label="酷月法语"
         android:icon="@mipmap/ic_launcher">

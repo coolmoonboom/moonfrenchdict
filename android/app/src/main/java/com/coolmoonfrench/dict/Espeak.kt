@@ -56,6 +56,20 @@ object Espeak {
 
     private var tts: OfflineTts? = null
 
+    /** 短词专用引擎：noise_scale=0 / noise_scale_w=0，同一输入每次输出完全一致，消除随机抖动。按需懒加载。 */
+    @Volatile
+    private var deterministicTts: OfflineTts? = null
+
+    /** 模型文件路径，初始化后缓存，供短词确定性引擎复用同一份模型文件。 */
+    @Volatile
+    private var modelPath: String? = null
+
+    @Volatile
+    private var tokensPath: String? = null
+
+    @Volatile
+    private var dataDirPath: String? = null
+
     /** 朗读语速倍率（0.25 ~ 1.5，默认 1.0）。Piper 引擎 speed 参数，1.0 为正常语速。 */
     @Volatile
     var speechRate: Float = 1f
@@ -127,21 +141,12 @@ object Espeak {
         }
         return try {
             val tts = OfflineTts(
-                config = OfflineTtsConfig(
-                    model = OfflineTtsModelConfig(
-                        vits = OfflineTtsVitsModelConfig(
-                            model = model.absolutePath,
-                            lexicon = "",
-                            tokens = tokens.absolutePath,
-                            dataDir = espeakData.absolutePath,
-                            dictDir = "",
-                            noiseScale = 0.667f,
-                            noiseScaleW = 0.8f,
-                            lengthScale = 1.0f
-                        ),
-                        numThreads = 2,
-                        debug = false
-                    )
+                config = buildConfig(
+                    model = model.absolutePath,
+                    tokens = tokens.absolutePath,
+                    dataDir = espeakData.absolutePath,
+                    noiseScale = 0.667f,
+                    noiseScaleW = 0.8f
                 )
             )
             val sr = tts.sampleRate()
@@ -151,11 +156,69 @@ object Espeak {
             }
             sampleRate = sr
             this.tts = tts
+            modelPath = model.absolutePath
+            tokensPath = tokens.absolutePath
+            dataDirPath = espeakData.absolutePath
             true
         } catch (e: Throwable) {
             lastError = "TTS 引擎初始化失败: ${e.message}"
             Log.e(TAG, "OfflineTts init failed", e)
             false
+        }
+    }
+
+    /** 构造 Piper VITS 引擎配置。noiseScale/noiseScaleW 为 0 时输出确定（无随机采样）。 */
+    private fun buildConfig(
+        model: String,
+        tokens: String,
+        dataDir: String,
+        noiseScale: Float,
+        noiseScaleW: Float
+    ): OfflineTtsConfig =
+        OfflineTtsConfig(
+            model = OfflineTtsModelConfig(
+                vits = OfflineTtsVitsModelConfig(
+                    model = model,
+                    lexicon = "",
+                    tokens = tokens,
+                    dataDir = dataDir,
+                    dictDir = "",
+                    noiseScale = noiseScale,
+                    noiseScaleW = noiseScaleW,
+                    lengthScale = 1.0f
+                ),
+                numThreads = 2,
+                debug = false
+            )
+        )
+
+    /**
+     * 获取短词确定性引擎（noise_scale=0 / noise_scale_w=0），按需创建并复用。
+     * 创建失败（如内存不足）时返回 null，调用方回退到主引擎。
+     */
+    private fun deterministicEngine(): OfflineTts? {
+        deterministicTts?.let { return it }
+        val model = modelPath ?: return null
+        val tokens = tokensPath ?: return null
+        val dataDir = dataDirPath ?: return null
+        synchronized(this) {
+            deterministicTts?.let { return it }
+            return try {
+                val engine = OfflineTts(
+                    config = buildConfig(
+                        model = model,
+                        tokens = tokens,
+                        dataDir = dataDir,
+                        noiseScale = 0f,
+                        noiseScaleW = 0f
+                    )
+                )
+                deterministicTts = engine
+                engine
+            } catch (e: Throwable) {
+                Log.e(TAG, "deterministic engine init failed", e)
+                null
+            }
         }
     }
 
@@ -180,8 +243,9 @@ object Espeak {
     }
 
     /** 用 Piper 引擎合成，返回 22050Hz 16bit 单声道 PCM 字节流 */
-    private fun synthesizePcm(text: String, speed: Float): ByteArray? {
-        val engine = tts ?: return null
+    private fun synthesizePcm(text: String, speed: Float, deterministic: Boolean = false): ByteArray? {
+        val engine = if (deterministic) (deterministicEngine() ?: tts) else tts
+        engine ?: return null
         val safeText = sanitizeForTts(text)
         val samples = engine.generate(safeText, 0, speed).samples
         if (samples.isEmpty()) return null
@@ -226,7 +290,7 @@ object Espeak {
      * 合成/播放失败时通过 [onError] 回调告知具体原因（UI 可用 Toast 展示）。
      * 播放采用单例 Job：本方法会先取消正在进行的上一次播放，保证不会叠加。
      */
-    fun speak(text: String, onError: ((String) -> Unit)? = null): Boolean {
+    fun speak(text: String, deterministic: Boolean = false, onError: ((String) -> Unit)? = null): Boolean {
         if (text.isBlank()) return true
         if (state == State.FAILED) {
             // 引擎已确定失败：同步返回 false，让 UI 立即提示真实原因
@@ -243,7 +307,7 @@ object Espeak {
 
                 // 语速：Piper 的 speed 参数，1.0 = 正常，>1 快，<1 慢
                 val speed = speechRate.coerceIn(0.25f, 1.5f)
-                val bytes = synthesizePcm(text, speed)
+                val bytes = synthesizePcm(text, speed, deterministic)
                 ensureActive()
                 if (bytes == null || bytes.isEmpty()) {
                     val msg = lastError ?: "语音合成失败(无 PCM)"
@@ -286,10 +350,10 @@ object Espeak {
     }
 
     /** 朗读并自动弹出失败原因 Toast。供 UI 按钮统一调用，快速连点只会播最新一次。 */
-    fun speakWithFeedback(context: Context, text: String) {
+    fun speakWithFeedback(context: Context, text: String, deterministic: Boolean = false) {
         val app = context.applicationContext
         val mainHandler = Handler(Looper.getMainLooper())
-        val ok = speak(text) { err ->
+        val ok = speak(text, deterministic) { err ->
             mainHandler.post {
                 Toast.makeText(app, "朗读失败：$err", Toast.LENGTH_LONG).show()
             }

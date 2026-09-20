@@ -70,7 +70,7 @@ class AppSettings(context: Context) {
         val snapped = snapSpeechRate(v)
         speechRate = snapped
         prefs.edit().putFloat("speech_rate", snapped).apply()
-        Espeak.setSpeechRate(snapped)
+        Speech.setSpeechRate(snapped)
     }
 
     companion object {

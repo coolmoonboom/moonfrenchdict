@@ -156,7 +156,7 @@ private fun WordFavoritesTab(repository: DictRepository) {
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     if (wordFavs.isEmpty()) {
@@ -192,8 +192,8 @@ private fun WordFavoritesTab(repository: DictRepository) {
                         )
                     }
                     IconButton(onClick = {
-                        Espeak.ensureInitialized(context)
-                                    Espeak.speakWithFeedback(context, entry.word)
+                        Speech.ensureInitialized(context)
+                                    Speech.speakWithFeedback(context, entry.word)
                     }) {
                         Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读 ${entry.word}", modifier = Modifier.size(16.dp))
                     }
@@ -222,7 +222,7 @@ private fun SentenceFavoritesTab(prefs: AIPreferences) {
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     if (sentenceFavs.isEmpty()) {
@@ -257,8 +257,8 @@ private fun SentenceFavoritesTab(prefs: AIPreferences) {
                         horizontalArrangement = Arrangement.End
                     ) {
                         IconButton(onClick = {
-                            Espeak.ensureInitialized(context)
-                                    Espeak.speakWithFeedback(context, saved.sentence)
+                            Speech.ensureInitialized(context)
+                                    Speech.speakWithFeedback(context, saved.sentence)
                         }) {
                             Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读", modifier = Modifier.size(16.dp))
                         }

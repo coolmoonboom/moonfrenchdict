@@ -160,7 +160,7 @@ fun PronounsScreen(onBack: () -> Unit) {
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -233,8 +233,8 @@ fun PronounsScreen(onBack: () -> Unit) {
                                 )
                                 IconButton(
                                     onClick = {
-                                        Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, pronoun)
+                                        Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, pronoun)
                                     },
                                     modifier = Modifier.size(28.dp)
                                 ) {

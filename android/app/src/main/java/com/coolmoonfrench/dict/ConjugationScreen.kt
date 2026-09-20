@@ -65,7 +65,7 @@ fun ConjugationScreen(
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     fun doSearch(q: String) {
@@ -201,8 +201,8 @@ fun ConjugationScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 IconButton(
                                     onClick = {
-                                        Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, c.infinitive)
+                                        Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, c.infinitive)
                                     },
                                     modifier = Modifier.size(40.dp)
                                 ) {

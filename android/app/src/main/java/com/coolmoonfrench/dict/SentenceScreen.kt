@@ -185,7 +185,7 @@ fun SentenceScreen(
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     /** 对已确定是法语的句子执行原有分析流程（逐词分析 + 整句中文翻译） */
@@ -330,8 +330,8 @@ fun SentenceScreen(
             if (sentence.isNotBlank()) {
                 IconButton(
                     onClick = {
-                        Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, searchSentence.ifBlank { sentence })
+                        Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, searchSentence.ifBlank { sentence })
                     },
                     modifier = Modifier.size(44.dp)
                 ) {
@@ -395,8 +395,8 @@ fun SentenceScreen(
                                 Spacer(Modifier.weight(1f))
                                 IconButton(
                                     onClick = {
-                                        Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, zhToFr!!.translatedText)
+                                        Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, zhToFr!!.translatedText)
                                     },
                                     modifier = Modifier.size(32.dp)
                                 ) {
@@ -414,6 +414,14 @@ fun SentenceScreen(
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            IpaLine(
+                                target = zhToFr!!.translatedText,
+                                aiPrefs = aiPrefs,
+                                sentence = true,
+                                textColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                                fontSize = 14.sp
                             )
                         }
                     }
@@ -476,6 +484,59 @@ fun SentenceScreen(
                     }
                 }
             }
+            // 整句音标（法语输入时；中文输入的音标已显示在绿色「中文 → 法语」框内）
+            val frenchForIpa = when {
+                zhToFr != null -> null
+                searchSentence.isNotBlank() && !hasChinese(searchSentence) -> searchSentence
+                sentence.isNotBlank() && !hasChinese(sentence) -> sentence
+                else -> null
+            }
+            if (frenchForIpa != null) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("整句音标", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Spacer(Modifier.width(8.dp))
+                                Text("来源: AI", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                                Spacer(Modifier.weight(1f))
+                                IconButton(
+                                    onClick = {
+                                        Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, frenchForIpa)
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.VolumeUp,
+                                        contentDescription = "朗读法语",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(frenchForIpa, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(2.dp))
+                            IpaLine(
+                                target = frenchForIpa,
+                                aiPrefs = aiPrefs,
+                                sentence = true,
+                                textColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+                }
+            }
+
             // AI 逐词解释
             if (aiLoading) {
                 item {
@@ -566,8 +627,8 @@ private fun AIWordCard(aw: AIWordMeaning) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = {
-                        Espeak.ensureInitialized(cardContext)
-                        Espeak.speakWithFeedback(cardContext, aw.word)
+                        Speech.ensureInitialized(cardContext)
+                        Speech.speakWithFeedback(cardContext, aw.word)
                     },
                     modifier = Modifier.size(32.dp)
                 ) {
@@ -667,8 +728,8 @@ private fun WordCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(
                     onClick = {
-                        Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, wa.surface)
+                        Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, wa.surface)
                     },
                     modifier = Modifier.size(32.dp)
                 ) {

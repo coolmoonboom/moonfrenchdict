@@ -32,7 +32,7 @@ fun FavoritesScreen(repository: DictRepository) {
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
-        Espeak.ensureInitialized(context)
+        Speech.ensureInitialized(context)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -89,8 +89,8 @@ fun FavoritesScreen(repository: DictRepository) {
                             }
                             IconButton(
                                 onClick = {
-                                    Espeak.ensureInitialized(context)
-                                        Espeak.speakWithFeedback(context, entry.word)
+                                    Speech.ensureInitialized(context)
+                                        Speech.speakWithFeedback(context, entry.word)
                                 },
                                 modifier = Modifier.size(32.dp)
                             ) {
