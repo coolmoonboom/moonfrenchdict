@@ -60,9 +60,18 @@ object AIClient {
         models
     }
 
-    /** 发送对话消息，返回助手回复 */
-    suspend fun chat(config: AIModelConfig, messages: List<AIMessage>, webContext: String? = null): String = withContext(Dispatchers.IO) {
+    /**
+     * 发送对话消息，返回助手回复。
+     * [systemPromptOverride] 用于特定场景（如口语对话）替换默认系统提示词。
+     */
+    suspend fun chat(
+        config: AIModelConfig,
+        messages: List<AIMessage>,
+        webContext: String? = null,
+        systemPromptOverride: String? = null
+    ): String = withContext(Dispatchers.IO) {
         val base = config.apiUrl.trim().trimEnd('/')
+        val sysPrompt = systemPromptOverride ?: systemPrompt
         val bodyJson: String
         val url: String
 
@@ -70,7 +79,7 @@ object AIClient {
             AIInterfaceType.ANTHROPIC -> {
                 url = base.substringBeforeLast("/messages").trimEnd('/') + "/messages"
                 val arr = JSONArray()
-                arr.put(JSONObject().put("role", "system").put("content", systemPrompt))
+                arr.put(JSONObject().put("role", "system").put("content", sysPrompt))
                 if (!webContext.isNullOrBlank()) {
                     arr.put(JSONObject().put("role", "user").put("content", buildWebContextPrompt(webContext)))
                 }
@@ -86,7 +95,7 @@ object AIClient {
             AIInterfaceType.OPENAI_RESPONSES -> {
                 url = base.substringBeforeLast("/responses").trimEnd('/') + "/responses"
                 val input = JSONArray()
-                input.put(JSONObject().put("role", "system").put("content", systemPrompt))
+                input.put(JSONObject().put("role", "system").put("content", sysPrompt))
                 if (!webContext.isNullOrBlank()) {
                     input.put(JSONObject().put("role", "system").put("content", buildWebContextPrompt(webContext)))
                 }
@@ -101,7 +110,7 @@ object AIClient {
             else -> { // openai_chat
                 url = base.substringBeforeLast("/chat/completions").trimEnd('/') + "/chat/completions"
                 val arr = JSONArray()
-                arr.put(JSONObject().put("role", "system").put("content", systemPrompt))
+                arr.put(JSONObject().put("role", "system").put("content", sysPrompt))
                 if (!webContext.isNullOrBlank()) {
                     arr.put(JSONObject().put("role", "system").put("content", buildWebContextPrompt(webContext)))
                 }

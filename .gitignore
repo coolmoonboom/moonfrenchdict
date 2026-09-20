@@ -19,3 +19,7 @@ key.properties
 # Python (tesseract OCR setup)
 __pycache__/
 *.pyc
+
+# Source archives and local release artifacts
+moonfrenchdict_src_*.tar.gz
+dist/*.apk

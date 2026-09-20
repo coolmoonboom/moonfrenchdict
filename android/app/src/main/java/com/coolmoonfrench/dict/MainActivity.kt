@@ -15,6 +15,7 @@ import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.automirrored.filled.Help
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -132,6 +133,7 @@ fun MainTabs(
     var aiRefreshKey by remember { mutableStateOf(0) }
     var showQuestionTypes by remember { mutableStateOf(false) }
     var showVideoImport by remember { mutableStateOf(false) }
+    var showVoiceChat by remember { mutableStateOf(false) }
     var showPhonetics by remember { mutableStateOf(false) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -237,6 +239,14 @@ fun MainTabs(
                     onClick = {
                         scope.launch { drawerState.close() }
                         showVideoImport = true
+                    }
+                )
+                DrawerItem(
+                    icon = Icons.Filled.Mic,
+                    label = "口语对话",
+                    onClick = {
+                        scope.launch { drawerState.close() }
+                        showVoiceChat = true
                     }
                 )
 
@@ -450,6 +460,19 @@ fun MainTabs(
         }
     }
 
+    // 口语对话（语音输入 -> 直接发送 -> 本地 TTS 播报，可随时打断）
+    if (showVoiceChat) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            VoiceChatScreen(
+                aiPrefs = aiPrefs,
+                onBack = { showVoiceChat = false }
+            )
+        }
+    }
+
     // 系统返回键处理：二级界面优先关闭，抽屉打开时先关闭抽屉
     BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
     BackHandler(enabled = showFavorites) { showFavorites = false }
@@ -463,6 +486,7 @@ fun MainTabs(
     BackHandler(enabled = showPhonetics) { showPhonetics = false }
     BackHandler(enabled = showQuestionTypes) { showQuestionTypes = false }
     BackHandler(enabled = showVideoImport) { showVideoImport = false }
+    BackHandler(enabled = showVoiceChat) { showVoiceChat = false }
 
     // 设置弹窗
     if (showSettings) {
