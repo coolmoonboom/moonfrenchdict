@@ -22,11 +22,24 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 判断释义是否包含中文 */
 internal fun hasChinese(s: String): Boolean = s.any { it in '\u4e00'..'\u9fff' }
+
+/**
+ * 查词前归一化输入：把不间断空格/全角空格/零宽字符换成普通空格，
+ * 去掉首尾空白并合并连续空格。避免「单词后多打一个空格」导致精确匹配失败、
+ * 进而丢失词性/释义/词根拆解等内容。
+ */
+internal fun normalizeLookupQuery(raw: String): String =
+    raw.replace('\u00A0', ' ')
+        .replace('\u3000', ' ')
+        .replace('\u200B', ' ')
+        .trim()
+        .replace(Regex("\\s+"), " ")
 
 /** 省音/缩合形式：如 d'eau = de + eau，l'application = le/la + application */
 internal data class Contraction(val surface: String, val prefix: String, val base: String)
@@ -81,6 +94,10 @@ fun LookupScreen(
     var contractionPrefix by remember { mutableStateOf("") }
     var contractionBase by remember { mutableStateOf("") }
     var favoriteWords by remember { mutableStateOf(emptySet<String>()) }
+    // 本地词库没有该词时，用 AI 补齐「音标 + 词性 + 中文释义」，以本地词条同样的版式展示
+    var aiWord by remember { mutableStateOf<AiWordInfo?>(null) }
+    var aiWordLoading by remember { mutableStateOf(false) }
+    var aiWordError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -93,7 +110,9 @@ fun LookupScreen(
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
     /** 用已确定是法语的词执行原有查询流程（精确匹配 / 缩合 / 近似 / 词根 / 派生 / 拆解） */
-    suspend fun searchFrench(fr: String) {
+    suspend fun searchFrench(raw: String) {
+        val fr = normalizeLookupQuery(raw)
+        if (fr.isEmpty()) return
         val exact = withContext(Dispatchers.IO) { repository.lookupExact(fr) }
         val contraction = if (exact.isEmpty()) detectContraction(fr) else null
         if (exact.isNotEmpty()) {
@@ -152,14 +171,18 @@ fun LookupScreen(
         }
     }
 
-    fun doSearch(q: String) {
-        query = q
+    fun doSearch(raw: String) {
+        query = raw
+        val q = normalizeLookupQuery(raw)
         onlineResult = null
         expansion = null
         breakdown = null
         contractionSurface = null
         contractionPrefix = ""
         contractionBase = ""
+        aiWord = null
+        aiWordLoading = false
+        aiWordError = null
         loading = false
         translateError = null
         zhError = null
@@ -169,6 +192,7 @@ fun LookupScreen(
             similar = emptyList()
             related = emptyList()
             derived = emptyList()
+            prefixSuggestions = emptyList()
             frenchTerm = ""
             zhToFr = null
             zhTranslating = false
@@ -180,7 +204,7 @@ fun LookupScreen(
             zhToFr = null
             zhTranslating = true
             searchJob = scope.launch {
-                val res = TranslationAssist.zhToFr(q.trim(), aiPrefs, translator)
+                val res = TranslationAssist.zhToFr(q, aiPrefs, translator)
                 val fr = res?.translatedText?.trim()
                 withContext(Dispatchers.Main) {
                     zhTranslating = false
@@ -193,7 +217,7 @@ fun LookupScreen(
         } else {
             zhToFr = null
             zhTranslating = false
-            frenchTerm = q.trim()
+            frenchTerm = q
             searchJob = scope.launch { searchFrench(q) }
         }
     }
@@ -212,6 +236,31 @@ fun LookupScreen(
             return@LaunchedEffect
         }
         prefixSuggestions = withContext(Dispatchers.IO) { repository.lookupPrefix(q, 10) }
+    }
+
+    // 本地没有该词时，用 AI 补齐「词性 + 音标 + 中文释义」，以本地词条同样的版式展示
+    LaunchedEffect(frenchTerm, selected, contractionSurface) {
+        val term = frenchTerm
+        if (selected != null || contractionSurface != null) {
+            aiWord = null
+            aiWordLoading = false
+            aiWordError = null
+            return@LaunchedEffect
+        }
+        val config = aiPrefs.modelConfig
+        if (term.isBlank() || hasChinese(term) || !IpaService.isConfigured(config)) {
+            aiWord = null
+            aiWordLoading = false
+            aiWordError = null
+            return@LaunchedEffect
+        }
+        aiWord = null
+        aiWordError = null
+        aiWordLoading = true
+        delay(500)
+        val info = AiWordSearch.search(config, term)
+        aiWordLoading = false
+        if (info == null) aiWordError = "AI 未能查询到「$term」" else aiWord = info
     }
 
     // 响应从历史查词界面点选的单词
@@ -370,8 +419,8 @@ fun LookupScreen(
                     }
                 }
 
-                // 无对应词条时的输入音标（法语输入）
-                if (selected == null && zhToFr == null && contractionSurface == null &&
+                // 无对应词条时的输入音标（法语输入）；AI 词条卡已包含音标时不再重复展示
+                if (selected == null && zhToFr == null && contractionSurface == null && aiWord == null &&
                     frenchTerm.isNotBlank() && !hasChinese(frenchTerm)
                 ) {
                     item {
@@ -414,6 +463,43 @@ fun LookupScreen(
                                 )
                             }
                         }
+                    }
+                }
+
+                // AI 补全的词条（本地无该词）：版式与本地主词条一致
+                if (aiWord != null) {
+                    item {
+                        AiWordEntryCard(info = aiWord!!, aiPrefs = aiPrefs, context = context)
+                    }
+                } else if (aiWordLoading && selected == null && frenchTerm.isNotBlank() &&
+                    !hasChinese(frenchTerm) && contractionSurface == null
+                ) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "AI 查词中…",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                } else if (aiWordError != null && selected == null && frenchTerm.isNotBlank() &&
+                    !hasChinese(frenchTerm) && contractionSurface == null
+                ) {
+                    item {
+                        Text(
+                            aiWordError!!,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
                     }
                 }
 
@@ -852,7 +938,7 @@ fun LookupScreen(
                                 }
                             }
                         }
-                    } else {
+                    } else if (aiWord == null && !aiWordLoading) {
                         item {
                             Box(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
@@ -964,6 +1050,91 @@ fun LookupScreen(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 本地词库没有该词时，用 AI 结果渲染的词条卡。
+ * 版式与本地主词条保持一致：朗读按钮 + 词头 + 词性 + 音标 + 中文释义 + 复制。
+ */
+@Composable
+private fun AiWordEntryCard(
+    info: AiWordInfo,
+    aiPrefs: AIPreferences,
+    context: Context
+) {
+    val pos = DictEntry.extractPos(info.meaning)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = {
+                        Speech.ensureInitialized(context)
+                        Speech.speakWithFeedback(context, info.word)
+                    }
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "朗读",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Text(
+                    text = info.word,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.weight(1f)
+                )
+                if (pos.isNotEmpty()) {
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = MaterialTheme.colorScheme.tertiaryContainer
+                    ) {
+                        Text(
+                            pos,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            IpaLine(
+                target = info.word,
+                aiPrefs = aiPrefs,
+                textColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                fontSize = 15.sp,
+                override = info.ipa
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = info.meaning,
+                fontSize = 16.sp,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "释义来源：AI（本地词库未收录）",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                )
+                CopyButton(info.word, context)
             }
         }
     }

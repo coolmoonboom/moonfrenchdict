@@ -16,6 +16,12 @@
 -keep class org.vosk.** { *; }
 -keep class org.mockk.** { *; }
 
+# JNA 是 Vosk 的底层依赖，其 JNI 代码按字段名 "peer" 反射访问 com.sun.jna.Pointer。
+# 若被混淆会抛 "Can't obtain peer field ID for class com.sun.jna.Pointer"，导致离线模型加载失败。
+-keep class com.sun.jna.** { *; }
+-keepclassmembers class * extends com.sun.jna.Structure { *; }
+-dontwarn com.sun.jna.**
+
 # ffmpeg-kit JNI
 -keep class com.arthenica.ffmpegkit.** { *; }
 

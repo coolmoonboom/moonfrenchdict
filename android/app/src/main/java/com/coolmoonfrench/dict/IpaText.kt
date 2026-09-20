@@ -97,10 +97,22 @@ fun IpaLine(
     sentence: Boolean = false,
     textColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     fontSize: TextUnit = 13.sp,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    override: String? = null
 ) {
     val key = target.trim()
     if (key.isEmpty()) return
+
+    // 已有现成音标（如 AI 查词结果）时直接展示，避免重复请求
+    if (!override.isNullOrBlank()) {
+        Text(
+            "音标 ${override.trim()}",
+            color = textColor,
+            fontSize = fontSize,
+            modifier = modifier
+        )
+        return
+    }
 
     val config = aiPrefs?.modelConfig
     val configured = IpaService.isConfigured(config)
