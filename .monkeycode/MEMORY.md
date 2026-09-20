@@ -101,3 +101,13 @@ Entries discovered by the Agent during task execution should follow this format:
   - 云同步默认语义应是「合并云端与本地」（并集后回写+上传），不要用覆盖式上传：新设备本机为空时上传会清空云端，导致其他设备随后拉取也变成空。手动「仅上传本机（覆盖云端）」保留为显式破坏性操作。
   - 收藏持久化：单词收藏在 `DictRepository` 的 `favorites` prefs（StringSet），句子收藏、AI 收藏、视频转文字收藏在 `AIPreferences` 的 `ai_settings` prefs；`SyncData`/`SyncBundle` 五段（history/favorites/sentences/ai_favorites/video_texts）须全部打包解包，新增收藏类型时同步扩段。
 
+[Project Knowledge Summary]
+- Date: 2026-09-20
+- Context: Discovered while releasing v1.0.26（发音改进 + APK 瘦身）
+- Category: Operations & Deployment / Workflow & Collaboration
+- Instructions:
+  - Release 版本号与 build.gradle 的 versionName 已解耦：versionName/versionCode 长期停在 1.0.17/17，GitHub release 编号按发布顺序递增（已到 v1.0.25）。新发布号从远端最新 release +1 取（如 v1.0.26），不要按 build.gradle 里的 versionName 推断；releases/tags 需先 `git fetch --tags origin` 再看远端。
+  - 仓库 `prepare-commit-msg` hook 会自动为每条提交追加 `Co-authored-by: monkeycode-ai <monkeycode-ai@chaitin.com>`，提交信息里不要再手动写该行，否则会重复两条。
+  - `gh release create/upload` 必须在 git 仓库目录内执行（gh 依赖 .git 上下文），APK 资产从 /tmp 用 `path#display-name.apk` 语法引用；APK 用 release 号命名（french_dict_v1.0.26.apk）。
+  - 构建 daemon 内存：gradle 堆 -Xmx3G + kotlin.daemon.jvmargs -Xmx768m + `--no-daemon --max-workers=2`，terminal memory_percent 70（peak ~4.5G）可稳定跑完含 R8 的 release 构建；-Xmx2G 或并行 worker 过多会触发 cgroup OOM 杀掉 daemon。
+
