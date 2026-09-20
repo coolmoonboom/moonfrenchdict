@@ -22,21 +22,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-private val TENSE_LABELS = listOf(
-    "直陈式现在时" to "Présent",
-    "未完成过去时" to "Imparfait",
-    "简单将来时" to "Futur simple",
-    "简单过去时" to "Passé simple",
-    "条件式现在时" to "Conditionnel",
-    "虚拟式现在时" to "Subjonctif",
-    "命令式" to "Impératif",
-    "复合过去时" to "Passé composé",
-    "愈过去时" to "Plus-que-parfait",
-    "先将来时" to "Futur antérieur",
-    "条件式过去时" to "Conditionnel passé",
-    "虚拟式过去时" to "Subjonctif passé"
-)
-
 private val SUBJECTS = listOf("je", "tu", "il/elle", "nous", "vous", "ils/elles")
 private val PRONOM_SUBJECTS = listOf("je me", "tu te", "il se", "nous nous", "vous vous", "ils se")
 
@@ -248,6 +233,13 @@ fun ConjugationScreen(
                     }
                 }
 
+                // 句型用法
+                VerbUsages.patternsOf(c.infinitive).takeIf { it.isNotEmpty() }?.let { patterns ->
+                    item {
+                        VerbUsageCard(patterns, modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp))
+                    }
+                }
+
                 // 单词拆解
                 breakdown?.let { bd ->
                     if (!bd.isEmpty) {
@@ -423,7 +415,8 @@ private fun LazyListScope.ActiveTenses(c: Conjugation, context: Context) {
     item { TenseRow("简单将来时", "Futur simple", c.futurSimple, context = context) }
     item { TenseRow("简单过去时", "Passé simple", c.passeSimple, context = context) }
     item { TenseRow("条件式现在时", "Conditionnel", c.conditionnel, context = context) }
-    item { TenseRow("虚拟式现在时", "Subjonctif", c.subjonctifPresent, context = context) }
+    item { TenseRow("虚拟式现在时", "Subjonctif présent", c.subjonctifPresent, context = context) }
+    item { TenseRow("虚拟式未完成过去时", "Subjonctif imparfait", c.subjonctifImparfait, context = context) }
     item { TenseRow("命令式", "Impératif", c.imperatif, context = context) }
 
     item { Spacer(Modifier.height(4.dp)) }
@@ -433,9 +426,11 @@ private fun LazyListScope.ActiveTenses(c: Conjugation, context: Context) {
     }
     item { TenseRow("复合过去时", "Passé composé", compoundPresent(c), context = context) }
     item { TenseRow("愈过去时", "Plus-que-parfait", compoundImparfait(c), context = context) }
+    item { TenseRow("先过去时", "Passé antérieur", compoundPasseSimple(c), context = context) }
     item { TenseRow("先将来时", "Futur antérieur", compoundFutur(c), context = context) }
     item { TenseRow("条件式过去时", "Conditionnel passé", compoundConditionnel(c), context = context) }
     item { TenseRow("虚拟式过去时", "Subjonctif passé", compoundSubjonctif(c), context = context) }
+    item { TenseRow("虚拟式愈过去时", "Subjonctif plus-que-parfait", compoundSubjonctifImparfait(c), context = context) }
 }
 
 private fun LazyListScope.PassiveTenses(pc: Conjugation, context: Context) {
@@ -444,7 +439,8 @@ private fun LazyListScope.PassiveTenses(pc: Conjugation, context: Context) {
     item { TenseRow("简单将来时", "Futur simple", pc.futurSimple, context = context) }
     item { TenseRow("简单过去时", "Passé simple", pc.passeSimple, context = context) }
     item { TenseRow("条件式现在时", "Conditionnel", pc.conditionnel, context = context) }
-    item { TenseRow("虚拟式现在时", "Subjonctif", pc.subjonctifPresent, context = context) }
+    item { TenseRow("虚拟式现在时", "Subjonctif présent", pc.subjonctifPresent, context = context) }
+    item { TenseRow("虚拟式未完成过去时", "Subjonctif imparfait", pc.subjonctifImparfait, context = context) }
     item { TenseRow("命令式", "Impératif", pc.imperatif, context = context) }
 
     item { Spacer(Modifier.height(4.dp)) }
@@ -454,6 +450,7 @@ private fun LazyListScope.PassiveTenses(pc: Conjugation, context: Context) {
     }
     item { TenseRow("复合过去时", "Passé composé", compoundPassive(pc), context = context) }
     item { TenseRow("愈过去时", "Plus-que-parfait", compoundImparfaitPassive(pc), context = context) }
+    item { TenseRow("先过去时", "Passé antérieur", compoundPasseSimplePassive(pc), context = context) }
     item { TenseRow("先将来时", "Futur antérieur", compoundFuturPassive(pc), context = context) }
     item { TenseRow("条件式过去时", "Conditionnel passé", compoundConditionnelPassive(pc), context = context) }
 }
@@ -464,7 +461,8 @@ private fun LazyListScope.PronominalTenses(pc: Conjugation, context: Context) {
     item { TenseRow("简单将来时", "Futur simple", pc.futurSimple, PRONOM_SUBJECTS, context) }
     item { TenseRow("简单过去时", "Passé simple", pc.passeSimple, PRONOM_SUBJECTS, context) }
     item { TenseRow("条件式现在时", "Conditionnel", pc.conditionnel, PRONOM_SUBJECTS, context) }
-    item { TenseRow("虚拟式现在时", "Subjonctif", pc.subjonctifPresent, PRONOM_SUBJECTS, context) }
+    item { TenseRow("虚拟式现在时", "Subjonctif présent", pc.subjonctifPresent, PRONOM_SUBJECTS, context) }
+    item { TenseRow("虚拟式未完成过去时", "Subjonctif imparfait", pc.subjonctifImparfait, PRONOM_SUBJECTS, context) }
     item { TenseRow("命令式", "Impératif", pc.imperatif, context = context) }
 
     item { Spacer(Modifier.height(4.dp)) }
@@ -474,41 +472,54 @@ private fun LazyListScope.PronominalTenses(pc: Conjugation, context: Context) {
     }
     item { TenseRow("复合过去时", "Passé composé", compoundPresent(pc), PRONOM_SUBJECTS, context) }
     item { TenseRow("愈过去时", "Plus-que-parfait", compoundImparfait(pc), PRONOM_SUBJECTS, context) }
+    item { TenseRow("先过去时", "Passé antérieur", compoundPasseSimple(pc), PRONOM_SUBJECTS, context) }
     item { TenseRow("先将来时", "Futur antérieur", compoundFutur(pc), PRONOM_SUBJECTS, context) }
     item { TenseRow("条件式过去时", "Conditionnel passé", compoundConditionnel(pc), PRONOM_SUBJECTS, context) }
     item { TenseRow("虚拟式过去时", "Subjonctif passé", compoundSubjonctif(pc), PRONOM_SUBJECTS, context) }
+    item { TenseRow("虚拟式愈过去时", "Subjonctif plus-que-parfait", compoundSubjonctifImparfait(pc), PRONOM_SUBJECTS, context) }
 }
 
 // 复合时态生成函数
-private fun compoundPresent(c: Conjugation): List<String> {
+internal fun compoundPresent(c: Conjugation): List<String> {
     val aux = if (c.auxiliary == "être") VerbConjugator.êtreConj.present else VerbConjugator.avoirConj.present
     return aux.map { "$it ${c.participePasse}" }
 }
-private fun compoundImparfait(c: Conjugation): List<String> {
+internal fun compoundImparfait(c: Conjugation): List<String> {
     val aux = if (c.auxiliary == "être") VerbConjugator.êtreConj.imparfait else VerbConjugator.avoirConj.imparfait
     return aux.map { "$it ${c.participePasse}" }
 }
-private fun compoundFutur(c: Conjugation): List<String> {
+internal fun compoundFutur(c: Conjugation): List<String> {
     val aux = if (c.auxiliary == "être") VerbConjugator.êtreConj.futurSimple else VerbConjugator.avoirConj.futurSimple
     return aux.map { "$it ${c.participePasse}" }
 }
-private fun compoundConditionnel(c: Conjugation): List<String> {
+internal fun compoundConditionnel(c: Conjugation): List<String> {
     val aux = if (c.auxiliary == "être") VerbConjugator.êtreConj.conditionnel else VerbConjugator.avoirConj.conditionnel
     return aux.map { "$it ${c.participePasse}" }
 }
-private fun compoundSubjonctif(c: Conjugation): List<String> {
+internal fun compoundSubjonctif(c: Conjugation): List<String> {
     val aux = if (c.auxiliary == "être") VerbConjugator.êtreConj.subjonctifPresent else VerbConjugator.avoirConj.subjonctifPresent
     return aux.map { "$it ${c.participePasse}" }
 }
-private fun compoundPassive(pc: Conjugation): List<String> {
+internal fun compoundPasseSimple(c: Conjugation): List<String> {
+    val aux = if (c.auxiliary == "être") VerbConjugator.êtreConj.passeSimple else VerbConjugator.avoirConj.passeSimple
+    return aux.map { "$it ${c.participePasse}" }
+}
+internal fun compoundSubjonctifImparfait(c: Conjugation): List<String> {
+    val aux = if (c.auxiliary == "être") VerbConjugator.êtreConj.subjonctifImparfait else VerbConjugator.avoirConj.subjonctifImparfait
+    return aux.map { "$it ${c.participePasse}" }
+}
+internal fun compoundPassive(pc: Conjugation): List<String> {
     return VerbConjugator.avoirConj.present.map { "$it été ${pc.participePasse}" }
 }
-private fun compoundImparfaitPassive(pc: Conjugation): List<String> {
+internal fun compoundImparfaitPassive(pc: Conjugation): List<String> {
     return VerbConjugator.avoirConj.imparfait.map { "$it été ${pc.participePasse}" }
 }
-private fun compoundFuturPassive(pc: Conjugation): List<String> {
+internal fun compoundFuturPassive(pc: Conjugation): List<String> {
     return VerbConjugator.avoirConj.futurSimple.map { "$it été ${pc.participePasse}" }
 }
-private fun compoundConditionnelPassive(pc: Conjugation): List<String> {
+internal fun compoundConditionnelPassive(pc: Conjugation): List<String> {
     return VerbConjugator.avoirConj.conditionnel.map { "$it été ${pc.participePasse}" }
+}
+internal fun compoundPasseSimplePassive(pc: Conjugation): List<String> {
+    return VerbConjugator.avoirConj.passeSimple.map { "$it été ${pc.participePasse}" }
 }

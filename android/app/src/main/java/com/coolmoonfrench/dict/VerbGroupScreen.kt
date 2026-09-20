@@ -162,22 +162,49 @@ fun VerbGroupScreen(conjugator: VerbConjugator) {
                 if (c == null) {
                     Text("无法生成变位")
                 } else {
-                    LazyColumn(modifier = Modifier.height(420.dp)) {
+                    LazyColumn(modifier = Modifier.height(480.dp)) {
                         item { Text("现在分词：${c.participePresent}", fontSize = 13.sp) }
                         item { Text("过去分词：${c.participePasse}", fontSize = 13.sp) }
                         item { Text("副动词：${c.gerondif}", fontSize = 13.sp) }
                         item { Text("复合不定式：${c.infinitifPasse}", fontSize = 13.sp) }
                         item { Spacer(Modifier.height(6.dp)) }
+                        item { SectionTitleInDialog("简单时态") }
                         item { SectionTitleInDialog("直陈式现在时") }
                         item { TenseLines(c.present) }
                         item { SectionTitleInDialog("未完成过去时") }
                         item { TenseLines(c.imparfait) }
                         item { SectionTitleInDialog("简单将来时") }
                         item { TenseLines(c.futurSimple) }
+                        item { SectionTitleInDialog("简单过去时") }
+                        item { TenseLines(c.passeSimple) }
+                        item { SectionTitleInDialog("条件式现在时") }
+                        item { TenseLines(c.conditionnel) }
                         item { SectionTitleInDialog("虚拟式现在时") }
                         item { TenseLines(c.subjonctifPresent) }
+                        item { SectionTitleInDialog("虚拟式未完成过去时") }
+                        item { TenseLines(c.subjonctifImparfait) }
                         item { SectionTitleInDialog("命令式") }
                         item { TenseLines(c.imperatif) }
+                        item { Spacer(Modifier.height(6.dp)) }
+                        item { SectionTitleInDialog("复合时态（${c.auxiliary} + 过去分词）") }
+                        item { SectionTitleInDialog("复合过去时") }
+                        item { TenseLines(compoundPresent(c)) }
+                        item { SectionTitleInDialog("愈过去时") }
+                        item { TenseLines(compoundImparfait(c)) }
+                        item { SectionTitleInDialog("先过去时") }
+                        item { TenseLines(compoundPasseSimple(c)) }
+                        item { SectionTitleInDialog("先将来时") }
+                        item { TenseLines(compoundFutur(c)) }
+                        item { SectionTitleInDialog("条件式过去时") }
+                        item { TenseLines(compoundConditionnel(c)) }
+                        item { SectionTitleInDialog("虚拟式过去时") }
+                        item { TenseLines(compoundSubjonctif(c)) }
+                        item { SectionTitleInDialog("虚拟式愈过去时") }
+                        item { TenseLines(compoundSubjonctifImparfait(c)) }
+                        VerbUsages.patternsOf(verb).takeIf { it.isNotEmpty() }?.let { patterns ->
+                            item { Spacer(Modifier.height(6.dp)) }
+                            item { VerbUsageCard(patterns) }
+                        }
                     }
                 }
             },
