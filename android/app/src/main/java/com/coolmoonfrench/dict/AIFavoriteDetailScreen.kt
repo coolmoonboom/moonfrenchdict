@@ -52,6 +52,7 @@ fun AIFavoriteDetailScreen(
     var notice by remember { mutableStateOf<String?>(null) }
     var exporting by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
+    val markdownComponents = remember { markdownWithWrappingTables() }
 
     if (favorite == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -124,9 +125,8 @@ fun AIFavoriteDetailScreen(
             notice = null
             val ok = withContext(Dispatchers.IO) {
                 try {
-                    val bmp = AIExportHelper.renderTextToBitmap(favorite!!.content)
                     val file = File(context.cacheDir, "fav_${favoriteId}.pdf")
-                    AIExportHelper.bitmapToPdf(bmp, file)
+                    AIExportHelper.renderTextToPdf(favorite!!.content, file)
                 } catch (e: Exception) { false }
             }
             exporting = false
@@ -239,7 +239,8 @@ fun AIFavoriteDetailScreen(
                     Spacer(Modifier.height(6.dp))
                     Markdown(
                         content = MarkdownSanitizer.sanitize(favorite!!.content),
-                        imageTransformer = Coil3ImageTransformerImpl
+                        imageTransformer = Coil3ImageTransformerImpl,
+                        components = markdownComponents
                     )
                     Spacer(Modifier.height(12.dp))
                 }

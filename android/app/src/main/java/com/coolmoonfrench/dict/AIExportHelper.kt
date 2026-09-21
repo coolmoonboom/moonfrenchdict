@@ -3,92 +3,34 @@ package com.coolmoonfrench.dict
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
-import android.net.Uri
 import androidx.core.content.FileProvider
-import androidx.compose.ui.graphics.toArgb
 import java.io.File
 import java.io.FileOutputStream
 
 object AIExportHelper {
 
-    const val EXPORT_WIDTH_PX = 900
+    const val EXPORT_WIDTH_PX = MarkdownExportRenderer.DEFAULT_WIDTH_PX
 
     /**
-     * 将一段 markdown 文本渲染为位图（白底）。
-     * 说明：此处用简化的文本排版渲染，重点保证可分享为图片/PDF。
+     * 将一段 markdown 渲染为位图（白底）。
+     * 使用 [MarkdownExportRenderer] 真正排版：标题分级、粗体/斜体、列表、引用、代码块，
+     * 以及带边框与自动换行的真实表格，而不是把标记当纯文本输出。
      */
-    fun renderTextToBitmap(markdown: String, widthPx: Int = EXPORT_WIDTH_PX): Bitmap {
-        val plain = stripMarkdown(markdown)
-        val padding = 48f
-        val lineHeight = 40f
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK
-            textSize = 34f
-            typeface = android.graphics.Typeface.DEFAULT
-        }
-        val available = widthPx - padding * 2
-        // 计算行数
-        val lines = mutableListOf<String>()
-        plain.split("\n").forEach { para ->
-            if (para.isBlank()) {
-                lines.add("")
-            } else {
-                val words = para.split(" ")
-                var cur = ""
-                for (w in words) {
-                    val test = if (cur.isEmpty()) w else "$cur $w"
-                    if (paint.measureText(test) <= available) {
-                        cur = test
-                    } else {
-                        if (cur.isNotEmpty()) lines.add(cur)
-                        cur = w
-                    }
-                }
-                if (cur.isNotEmpty()) lines.add(cur)
-            }
-        }
-        val height = (lines.size * lineHeight + padding * 2).toInt().coerceAtLeast(200)
-        val bmp = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        canvas.drawColor(Color.WHITE)
-        var y = padding + lineHeight
-        for (line in lines) {
-            if (line.isBlank()) {
-                y += lineHeight * 0.5f
-            } else {
-                canvas.drawText(line, padding, y, paint)
-                y += lineHeight
-            }
-        }
-        return bmp
-    }
+    fun renderTextToBitmap(markdown: String, widthPx: Int = EXPORT_WIDTH_PX): Bitmap =
+        MarkdownExportRenderer.toBitmap(markdown, widthPx)
 
-    /** 极简 markdown 剥除：去掉标记符号，保留可读文本 */
-    private fun stripMarkdown(md: String): String {
-        var s = md
-        s = s.replace(Regex("!\\[([^\\]]*)\\]\\([^)]*\\)"), "图片: $1")
-        s = s.replace(Regex("\\[(.*?)\\]\\([^)]*\\)"), "$1")
-        s = s.replace(Regex("^#{1,6}\\s+", RegexOption.MULTILINE), "")
-        s = s.replace(Regex("^[-*+]\\s+", RegexOption.MULTILINE), "• ")
-        s = s.replace(Regex("^\\s*\\d+\\.\\s+", RegexOption.MULTILINE), "")
-        s = s.replace("**", "").replace("__", "").replace("`", "").replace("*", "").replace("_", "")
-        s = s.replace(Regex("^\\s*>\\s?", RegexOption.MULTILINE), "")
-        s = s.replace("~~", "")
-        s = s.replace("```", "")
-        return s
-    }
+    /** 将 markdown 直接绘制为矢量 PDF（文字可选中、分页对齐到行首）。 */
+    fun renderTextToPdf(markdown: String, dest: File): Boolean =
+        MarkdownExportRenderer.toPdf(markdown, dest)
 
-    /** 将位图保存为 PDF 文件 */
+    /** 将位图保存为 PDF 文件（位图分页贴图，作为矢量导出的降级方案保留）。 */
     fun bitmapToPdf(bmp: Bitmap, dest: File): Boolean {
         return try {
             val document = PdfDocument()
             val pageWidth = 595
             val pageHeight = 842
-            // 将位图拆分成多页
             val scale = (pageWidth - 40).toFloat() / bmp.width
             val scaledHeight = (bmp.height * scale).toInt()
             var yOffset = 0
@@ -98,7 +40,6 @@ object AIExportHelper {
                 val page = document.startPage(pageInfo)
                 val canvas = page.canvas
                 canvas.drawColor(Color.WHITE)
-                // 计算本页需要绘制的源区域
                 val availH = pageHeight - 40
                 val srcTopPx = ((yOffset) / scale).toInt()
                 val srcBottomPx = (((yOffset + availH) / scale).toInt()).coerceAtMost(bmp.height)
