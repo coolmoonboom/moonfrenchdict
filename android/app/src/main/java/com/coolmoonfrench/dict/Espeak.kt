@@ -23,6 +23,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -54,6 +56,7 @@ object Espeak {
     @Volatile
     private var lastError: String? = null
 
+    @Volatile
     private var tts: OfflineTts? = null
 
     /** 短词专用引擎：noise_scale=0 / noise_scale_w=0，同一输入每次输出完全一致，消除随机抖动。按需懒加载。 */
@@ -77,6 +80,17 @@ object Espeak {
 
     private val playbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var playbackJob: Job? = null
+
+    /**
+     * 串行化所有原生合成调用（`OfflineTts.generate()`）。
+     *
+     * 原生 `generate()` 不是线程安全的，且是**阻塞调用、无法被协程取消**：
+     * [speak] 每次会先 `stop()` 取消上一次播放，但上一次的原生合成仍在后台线程里跑；
+     * 若此时新的合成又进入同一个引擎，就会在 native 层并发访问同一实例而段错误闪退
+     * （典型场景：长按打断播报后紧接着播报新回复）。
+     * 用互斥锁保证同一时刻只有一个合成在执行；被取消的任务会在排队处直接退出。
+     */
+    private val generateLock = Mutex()
 
     /** 保护 audioTrack 及其生命周期操作（创建/play/write/release/stop）的锁。 */
     private val trackLock = Any()
@@ -242,12 +256,22 @@ object Espeak {
         }
     }
 
-    /** 用 Piper 引擎合成，返回 22050Hz 16bit 单声道 PCM 字节流 */
-    private fun synthesizePcm(text: String, speed: Float, deterministic: Boolean = false): ByteArray? {
-        val engine = if (deterministic) (deterministicEngine() ?: tts) else tts
-        engine ?: return null
+    /**
+     * 用 Piper 引擎合成，返回 22050Hz 16bit 单声道 PCM 字节流。
+     * 所有原生合成统一走 [generateLock] 串行执行（并发调用会闪退），
+     * 排队期间任务被取消则直接抛 [CancellationException] 退出，不再合成。
+     */
+    private suspend fun synthesizePcm(text: String, speed: Float, deterministic: Boolean = false): ByteArray? {
         val safeText = sanitizeForTts(text)
-        val samples = engine.generate(safeText, 0, speed).samples
+        // 没有任何字母/数字的文本（纯标点、emoji 等）音素化后为空，直接跳过，
+        // 避免把空音素序列送进原生层
+        if (!ttsTextIsSynthesisable(safeText)) return null
+        val samples = generateLock.withLock {
+            currentCoroutineContext().ensureActive()
+            val engine = if (deterministic) (deterministicEngine() ?: tts) else tts
+            engine ?: return null
+            engine.generate(safeText, 0, speed).samples
+        }
         if (samples.isEmpty()) return null
         // float[] -> 16bit PCM
         val bytes = ByteArray(samples.size * 2)
@@ -527,3 +551,11 @@ object Espeak {
     /** 判断 audioTrack 是否仍指向指定 track（在锁内或锁外调用均可）。 */
     private fun isCurrentTrack(track: AudioTrack): Boolean = audioTrack === track
 }
+
+/**
+ * 送入 TTS 引擎前的前置判断：文本至少要含一个字母或数字。
+ * 纯标点（如 `...`、`!!!`）或 emoji 经 [Espeak] 清洗后音素序列为空，
+ * 送进原生引擎没有意义，极端情况下还会触发原生层异常。
+ */
+internal fun ttsTextIsSynthesisable(text: String): Boolean =
+    text.isNotBlank() && text.any { it.isLetterOrDigit() }
