@@ -4,7 +4,7 @@
 
 ## 功能特性
 
-- **查词**：本地词典（36 万+ 词条，含 3.4 万+ 中文释义）即查即得，支持模糊匹配、近似词/变体推荐、词根拆解（前缀/词根/后缀）；本地无中文释义时自动用 AI（AI 界面中配置的模型）翻译，未配置 AI 则回退 MyMemory 免费翻译
+- **查词**：本地词典（36 万+ 词条，含 3.4 万+ 中文释义）即查即得，支持模糊匹配、近似词/变体推荐、词根拆解（前缀/词根/后缀）；自动过滤输入的首尾与多余空格；本地完全未收录的词由 AI 生成完整词条（版式与本地词条一致）；本地无中文释义时自动用 AI（AI 界面中配置的模型）翻译，未配置 AI 则回退 MyMemory 免费翻译
 - **动词变位**：输入动词原形生成完整变位表，覆盖主动/被动/代动词各时态
 - **动词分组**：按词尾与词族分类记忆不规则动词（-dre/-ttre/-tir/-enir/-indre/-uire/-aître/-oir 等规律族）
 - **句子分析**：逐词解析句子的词性、时态、语法成分
@@ -14,37 +14,44 @@
 - **AI 助手**：内置对话界面（需自备 API Key 配置），支持历史会话、导出分享
 - **OCR 识别**：图片文字识别基于 Google ML Kit，离线可用
 - **视频转文字**：选择本地法语视频，ffmpeg 提取音频后由 Vosk 离线识别，结果保存到本地记录，识别文本可收藏并随云同步（内置小模型即开即用，可下载高精度大模型，支持导入本地自选模型、卸载释放空间；识别随界面后台自动取消，可用内存不足时自动提醒）。
+- **口语对话**：长按麦克风说法语、松开即发送（无需手动点提交），支持打断；AI 回复由本地语音合成逐句播报。语音识别同样基于 Vosk 离线模型，日常对话与发音练习不依赖网络。
 
 ## 技术栈
 
 - Kotlin + Jetpack Compose（Material 3）
 - Room / SQLite 本地存储
 - Google ML Kit（文字识别）
-- Vosk（视频离线语音识别）+ FFmpegKit（音频提取）
+- Vosk（离线语音识别，用于视频转文字与口语对话）+ FFmpegKit（音频提取）
+- 本地语音合成：eSpeak / 系统 TTS（单词、句子与口语对话回复播报）
 - OkHttp（联网翻译与 AI 请求）
 - PDFBox（收藏导出）
 - 离线词典数据内置（`assets/`）
 
 ## 构建
 
-环境要求：JDK 17+，Android SDK 34+（compileSdk 36）。
+环境要求：JDK 17+，Android SDK 34+（compileSdk 36），Gradle 9.3.1（见 `gradle/wrapper/gradle-wrapper.properties`）。
+
+仓库未包含 `gradlew` 启动脚本，请使用本机安装的 Gradle 9.3.1+ 执行：
 
 ```bash
-# 构建 Debug APK
+# 构建 Release APK（使用 debug 签名，便于直接安装）
 cd android
-./gradlew :app:assembleDebug
+gradle :app:assembleRelease
+
+# 构建 Debug APK
+gradle :app:assembleDebug
 
 # 运行单元测试
-./gradlew :app:testDebugUnitTest
+gradle :app:testDebugUnitTest
 ```
 
-APK 输出路径：`android/app/build/outputs/apk/debug/app-debug.apk`
+APK 输出路径：`android/app/build/outputs/apk/release/app-release.apk`、`android/app/build/outputs/apk/debug/app-debug.apk`
 
 ## 安装
 
-- 直接下载 [Release v1.0.2](https://github.com/coolmoonboom/moonfrenchdict/releases/tag/v1.0.2) 中的 APK 安装
+- 直接下载 [最新 Release](https://github.com/coolmoonboom/moonfrenchdict/releases/latest) 中的 APK 安装（当前 v1.0.30）
 - 或按上方步骤本地构建后安装
-- 最低支持 Android 7.0（minSdk 24）
+- 仅提供 arm64-v8a，最低支持 Android 7.0（minSdk 24）
 
 ## 项目结构
 
@@ -60,9 +67,14 @@ android/
 │   ├── VideoImportScreen.kt                     # 视频转文字
 │   ├── VoskModelManager.kt                      # Vosk 模型管理（内置/下载/导入/卸载）
 │   ├── VideoToText.kt                           # ffmpeg + Vosk 识别管线
+│   ├── StreamingAsr.kt                          # Vosk 流式麦克风识别（口语对话）
+│   ├── VoiceChatScreen.kt                       # 口语对话
+│   ├── AiWordSearch.kt                          # AI 补全本地未收录词条
+│   ├── IpaText.kt                               # 音标渲染
 │   ├── room/                                    # Room 本地记录
 │   └── ...                                      # 其余功能模块
 ├── app/src/main/assets/                         # 离线词典数据
+├── app/src/main/proguard-rules.pro              # Release 混淆规则（保留 JNA 等）
 └── app/src/test/                                # 单元测试
 ```
 
