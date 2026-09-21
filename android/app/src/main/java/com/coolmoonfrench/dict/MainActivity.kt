@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 class MainActivity : ComponentActivity() {
 
@@ -164,97 +166,102 @@ fun MainTabs(
             ModalDrawerSheet(
                 modifier = Modifier.width(280.dp)
             ) {
-                // 顶部：云端登录区（坚果云 WebDAV，阿里/百度预留）
-                CloudLoginSection(
-                    context = LocalContext.current,
-                    repository = repository,
-                    aiPrefs = aiPrefs,
+                // 登录区 + 功能列表放在可滚动列中，避免内容超出屏幕后底部条目无法触达
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                )
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    // 顶部：云端登录区（坚果云 WebDAV，阿里/百度预留）
+                    CloudLoginSection(
+                        context = LocalContext.current,
+                        repository = repository,
+                        aiPrefs = aiPrefs,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                    // 中部：功能按钮
+                    DrawerItem(
+                        icon = Icons.Filled.Star,
+                        label = "收藏",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showFavorites = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.Filled.History,
+                        label = "历史查词",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showHistory = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.Filled.School,
+                        label = "语法练习",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showGrammar = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.Filled.Book,
+                        label = "语法学习",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showGrammarLearn = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.Filled.TextFields,
+                        label = "所有代词",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showPronouns = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.Filled.RecordVoiceOver,
+                        label = "字母音标表",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showPhonetics = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.AutoMirrored.Filled.Help,
+                        label = "问句类型",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showQuestionTypes = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.Filled.VideoLibrary,
+                        label = "视频转文字",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showVideoImport = true
+                        }
+                    )
+                    DrawerItem(
+                        icon = Icons.Filled.Mic,
+                        label = "口语对话",
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showVoiceChat = true
+                        }
+                    )
+                }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                // 中部：功能按钮
-                DrawerItem(
-                    icon = Icons.Filled.Star,
-                    label = "收藏",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showFavorites = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.Filled.History,
-                    label = "历史查词",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showHistory = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.Filled.School,
-                    label = "语法练习",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showGrammar = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.Filled.Book,
-                    label = "语法学习",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showGrammarLearn = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.Filled.TextFields,
-                    label = "所有代词",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showPronouns = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.Filled.RecordVoiceOver,
-                    label = "字母音标表",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showPhonetics = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.AutoMirrored.Filled.Help,
-                    label = "问句类型",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showQuestionTypes = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.Filled.VideoLibrary,
-                    label = "视频转文字",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showVideoImport = true
-                    }
-                )
-                DrawerItem(
-                    icon = Icons.Filled.Mic,
-                    label = "口语对话",
-                    onClick = {
-                        scope.launch { drawerState.close() }
-                        showVoiceChat = true
-                    }
-                )
-
-                Spacer(Modifier.weight(1f))
-
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-                // 底部：设置按钮
+                // 底部：设置按钮固定在底部，始终可见可点
                 DrawerItem(
                     icon = Icons.Filled.Settings,
                     label = "设置",
