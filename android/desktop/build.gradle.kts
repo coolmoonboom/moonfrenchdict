@@ -44,7 +44,7 @@ compose.desktop {
             packageName = "MoonFrenchDict"
             packageVersion = "1.0.0"
             vendor = "coolmoon"
-            description = "法语词典桌面预览：查词、变位、中文候选"
+            description = "French dictionary desktop preview: lookup, conjugation, Chinese candidates"
         }
     }
 }
