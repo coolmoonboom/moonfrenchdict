@@ -99,6 +99,9 @@ class DictRepository(private val context: Context) {
     /** 后台线程构建索引（首屏显示后调用） */
     suspend fun ensureIndexInBackground() = withContext(Dispatchers.IO) { ensureIndex() }
 
+    /** 后台线程预热中文动词索引，避免首次中文查询时才扫描。 */
+    suspend fun prewarmChineseVerbIndex() = withContext(Dispatchers.IO) { ensureChineseVerbIndex() }
+
     /**
      * 构建中文动词内存索引（只取带中文释义的动词行，幂等）。
      * 全表扫描但已用 zh<>'' 过滤，约 1 万条，耗时可控。

@@ -1,6 +1,7 @@
 package com.coolmoonfrench.dict
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /** 一个候选法语动词：含义与中文查询相同或相近。 */
@@ -31,17 +32,24 @@ data class CandidateResult(
 object ChineseVerbSearch {
 
     const val MAX_CANDIDATES = 8
+    private const val AI_TIMEOUT_MS = 10_000L
 
+    /**
+     * 中文查询入口。本地候选就绪后通过 [onLocalReady] 先行回调（调用方在 Main 协程中
+     * 即可立即渲染），AI 补充完成后再返回合并结果；AI 超时则以本地结果兜底。
+     */
     suspend fun find(
         query: String,
         repository: DictRepository,
         conjugator: VerbConjugator,
-        config: AIModelConfig?
+        config: AIModelConfig?,
+        onLocalReady: (List<VerbCandidate>) -> Unit = {}
     ): CandidateResult {
         val q = query.trim()
         if (q.isEmpty()) return CandidateResult(emptyList())
 
         val local = repository.searchVerbsByChinese(q, MAX_CANDIDATES)
+        onLocalReady(local)
 
         var core = ""
         var aiCandidates: List<VerbCandidate> = emptyList()
@@ -51,16 +59,20 @@ object ChineseVerbSearch {
         if (config != null && IpaService.isConfigured(config)) {
             aiAttempted = true
             try {
-                val parsed = VerbCandidateParser.parse(
-                    AIClient.chat(config, listOf(AIMessage("user", buildPrompt(q)))),
-                    conjugator
-                )
-                core = parsed.core
-                aiCandidates = fillMissingMeaning(parsed.candidates, repository)
+                val reply = withTimeoutOrNull(AI_TIMEOUT_MS) {
+                    AIClient.chat(config, listOf(AIMessage("user", buildPrompt(q))))
+                }
+                if (reply == null) {
+                    aiError = "AI 在线补充超时，以下为本地结果"
+                } else {
+                    val parsed = VerbCandidateParser.parse(reply, conjugator)
+                    core = parsed.core
+                    aiCandidates = fillMissingMeaning(parsed.candidates, repository)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                aiError = e.message?.take(100) ?: "AI 查询失败"
+                aiError = "AI 补充失败：${e.message?.take(80) ?: "未知错误"}"
             }
         }
 

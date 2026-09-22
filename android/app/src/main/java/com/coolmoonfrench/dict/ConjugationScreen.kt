@@ -65,6 +65,11 @@ fun ConjugationScreen(
         Speech.ensureInitialized(context)
     }
 
+    // 预热中文动词候选索引（幂等，后台执行）
+    LaunchedEffect(Unit) {
+        repository.prewarmChineseVerbIndex()
+    }
+
     /** 用大模型查询单词的中文释义与音标；带取消，保证新输入能立即打断旧请求。 */
     fun runAiWordSearch(word: String) {
         val config = aiPrefs.modelConfig
@@ -152,7 +157,17 @@ fun ConjugationScreen(
         searchJob = scope.launch {
             try {
                 delay(300)
-                val res = ChineseVerbSearch.find(q, repository, conjugator, aiPrefs.modelConfig)
+                val res = ChineseVerbSearch.find(
+                    query = q,
+                    repository = repository,
+                    conjugator = conjugator,
+                    config = aiPrefs.modelConfig,
+                    onLocalReady = { local ->
+                        // 本地候选先行展示，AI 结果稍后合并刷新
+                        candidates = local
+                        if (local.isNotEmpty()) loading = false
+                    }
+                )
                 candidates = res.candidates
                 coreMeaning = res.coreMeaning
                 candError = res.aiError
@@ -176,14 +191,14 @@ fun ConjugationScreen(
         doSearch(infinitive)
     }
 
-    /** 从变位结果返回候选列表。 */
+    /** 从变位结果返回候选列表：直接复用已有候选，避免重新加载。 */
     fun backToCandidates() {
         searchJob?.cancel()
         searchJob = null
         selectedFromCandidates = false
         chineseMode = true
         query = lastChineseQuery
-        scheduleChineseSearch(lastChineseQuery)
+        if (candidates.isEmpty()) scheduleChineseSearch(lastChineseQuery)
     }
 
     /** 统一输入入口：中文走候选模式，其余走现有法语查询路径。 */

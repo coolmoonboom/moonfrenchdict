@@ -34,8 +34,8 @@ graph TD
 数据流说明：
 
 1. 输入判定用现有 `hasChinese`（`LookupScreen.kt:30`）。
-2. 中文查询走候选分支；本地与 AI 并行/顺序获取后合并。
-3. 点选候选后把输入替换为不定式并复用现有法语变位渲染。
+2. 中文查询走候选分支；**本地候选经 `onLocalReady` 回调先行渲染**（约 0.5s 内可见），AI 补充完成后合并刷新列表。
+3. 点选候选后把输入替换为不定式并复用现有法语变位渲染；「返回候选」直接复用内存中已有候选，不重新查询。
 4. 法语输入完全走原逻辑，不进入候选分支。
 
 ## Components and Interfaces
@@ -63,14 +63,22 @@ data class CandidateResult(
 
 object ChineseVerbSearch {
     const val MAX_CANDIDATES = 8
+    // 本地候选就绪即回调，供 UI 先行渲染；全程带取消，AI 侧 10s 超时兜底
     suspend fun find(
         query: String,
         repository: DictRepository,
         conjugator: VerbConjugator,
-        aiPrefs: AIPreferences
+        aiPrefs: AIPreferences,
+        onLocalReady: (List<VerbCandidate>) -> Unit = {}
     ): CandidateResult
 }
 ```
+
+渲染策略（`ConjugationScreen`）：
+
+- 中文输入 → `onLocalReady(local)` 先把本地候选填入并结束 loading；AI 返回后填入合并结果。本地为空时才保持 loading 等待 AI。
+- 「返回候选」直接复用已有 `candidates` 状态，非空则不重新查询。
+- 进入变位页即 `prewarmChineseVerbIndex()` 后台预热，消除首次查询的索引扫描开销。
 
 内部拆出可测纯函数：
 
