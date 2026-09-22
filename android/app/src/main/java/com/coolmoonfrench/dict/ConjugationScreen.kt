@@ -3,6 +3,7 @@ package com.coolmoonfrench.dict
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -223,6 +224,15 @@ fun ConjugationScreen(
     // 恢复配置变化前已查询的动词
     LaunchedEffect(Unit) {
         if (query.isNotBlank()) onQueryChange(query)
+    }
+
+    // 返回手势拦截：变位详情回候选列表，候选态清空查询回初始态，避免直接退出应用
+    BackHandler(enabled = chineseMode || selectedFromCandidates) {
+        if (selectedFromCandidates) {
+            backToCandidates()
+        } else {
+            onQueryChange("")
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

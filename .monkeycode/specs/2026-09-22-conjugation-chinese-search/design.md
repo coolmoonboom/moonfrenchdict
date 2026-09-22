@@ -78,6 +78,7 @@ object ChineseVerbSearch {
 
 - 中文输入 → `onLocalReady(local)` 先把本地候选填入并结束 loading；AI 返回后填入合并结果。本地为空时才保持 loading 等待 AI。
 - 「返回候选」直接复用已有 `candidates` 状态，非空则不重新查询。
+- 系统返回（键/全面屏手势）经 `BackHandler` 拦截：变位详情回候选列表；候选态清空查询回初始态；再次返回才走默认行为，避免手势直接退出应用。
 - 进入变位页即 `prewarmChineseVerbIndex()` 后台预热，消除首次查询的索引扫描开销。
 
 内部拆出可测纯函数：
