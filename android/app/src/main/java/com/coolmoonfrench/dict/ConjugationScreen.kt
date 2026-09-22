@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val SUBJECTS = listOf("je", "tu", "il/elle", "nous", "vous", "ils/elles")
@@ -50,6 +51,12 @@ fun ConjugationScreen(
     var aiError by remember { mutableStateOf<String?>(null) }
     var aiLoading by remember { mutableStateOf(false) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
+    var chineseMode by remember { mutableStateOf(false) }
+    var candidates by remember { mutableStateOf<List<VerbCandidate>>(emptyList()) }
+    var coreMeaning by remember { mutableStateOf("") }
+    var candError by remember { mutableStateOf<String?>(null) }
+    var selectedFromCandidates by remember { mutableStateOf(false) }
+    var lastChineseQuery by rememberSaveable { mutableStateOf("") }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -127,9 +134,80 @@ fun ConjugationScreen(
         }
     }
 
+    /** 中文查询：防抖 300ms 后生成候选，新输入会取消旧请求。 */
+    fun scheduleChineseSearch(q: String) {
+        searchJob?.cancel()
+        searchJob = null
+        loading = false
+        aiLoading = false
+        aiInfo = null
+        aiError = null
+        conj = null; passive = null; pronominalConj = null
+        breakdown = null; meaning = ""; error = null; foundInfinitive = null
+        candidates = emptyList()
+        coreMeaning = ""
+        candError = null
+        if (q.isBlank()) return
+        loading = true
+        searchJob = scope.launch {
+            try {
+                delay(300)
+                val res = ChineseVerbSearch.find(q, repository, conjugator, aiPrefs.modelConfig)
+                candidates = res.candidates
+                coreMeaning = res.coreMeaning
+                candError = res.aiError
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                candError = "查询失败：${e.message?.take(100) ?: "未知错误"}"
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    /** 点选候选：改为展示该不定式的完整变位。 */
+    fun selectCandidate(infinitive: String) {
+        searchJob?.cancel()
+        searchJob = null
+        selectedFromCandidates = true
+        chineseMode = false
+        query = infinitive
+        doSearch(infinitive)
+    }
+
+    /** 从变位结果返回候选列表。 */
+    fun backToCandidates() {
+        searchJob?.cancel()
+        searchJob = null
+        selectedFromCandidates = false
+        chineseMode = true
+        query = lastChineseQuery
+        scheduleChineseSearch(lastChineseQuery)
+    }
+
+    /** 统一输入入口：中文走候选模式，其余走现有法语查询路径。 */
+    fun onQueryChange(q: String) {
+        query = q
+        if (hasChinese(q)) {
+            chineseMode = true
+            selectedFromCandidates = false
+            lastChineseQuery = q
+            scheduleChineseSearch(q)
+        } else {
+            chineseMode = false
+            selectedFromCandidates = false
+            lastChineseQuery = ""
+            candidates = emptyList()
+            coreMeaning = ""
+            candError = null
+            doSearch(q)
+        }
+    }
+
     // 恢复配置变化前已查询的动词
     LaunchedEffect(Unit) {
-        if (query.isNotBlank()) doSearch(query)
+        if (query.isNotBlank()) onQueryChange(query)
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -141,18 +219,32 @@ fun ConjugationScreen(
         ) {
             OutlinedTextField(
                 value = query,
-                onValueChange = { doSearch(it) },
+                onValueChange = { onQueryChange(it) },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("输入法语动词（原形或变体）") },
+                placeholder = { Text("输入法语动词（原形或变体）或中文含义") },
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline
                 )
             )
-            Button(onClick = { doSearch(query) }) {
+            Button(onClick = { onQueryChange(query) }) {
                 Text("变位")
             }
+        }
+
+        if (chineseMode && !selectedFromCandidates) {
+            ChineseCandidatePanel(
+                query = query,
+                loading = loading,
+                candidates = candidates,
+                coreMeaning = coreMeaning,
+                error = candError,
+                aiConfigured = IpaService.isConfigured(aiPrefs.modelConfig),
+                onSelect = { selectCandidate(it) },
+                onRetry = { onQueryChange(query) }
+            )
+            return@Column
         }
 
         if (error != null) {
@@ -219,6 +311,16 @@ fun ConjugationScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
+                if (selectedFromCandidates) {
+                    item {
+                        TextButton(
+                            onClick = { backToCandidates() },
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        ) {
+                            Text("‹ 返回候选")
+                        }
+                    }
+                }
                 // 动词卡片
                 item {
                     val displayForm = if (foundInfinitive != null) query.trim() else c.infinitive
@@ -645,4 +747,147 @@ internal fun compoundConditionnelPassive(pc: Conjugation): List<String> {
 }
 internal fun compoundPasseSimplePassive(pc: Conjugation): List<String> {
     return VerbConjugator.avoirConj.passeSimple.map { "$it été ${pc.participePasse}" }
+}
+
+/** 中文查询候选面板：加载 / 空结果 / 候选列表三态。 */
+@Composable
+private fun ChineseCandidatePanel(
+    query: String,
+    loading: Boolean,
+    candidates: List<VerbCandidate>,
+    coreMeaning: String,
+    error: String?,
+    aiConfigured: Boolean,
+    onSelect: (String) -> Unit,
+    onRetry: () -> Unit
+) {
+    when {
+        loading && candidates.isEmpty() -> Box(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("正在匹配候选动词…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        candidates.isEmpty() -> Box(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "未找到与「$query」匹配的法语动词",
+                    textAlign = TextAlign.Center
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(error, color = MaterialTheme.colorScheme.error, fontSize = 13.sp, textAlign = TextAlign.Center)
+                }
+                if (!aiConfigured) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "配置 AI 模型可获得更准确的中文候选",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onRetry) { Text("重试") }
+            }
+        }
+
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 16.dp)
+        ) {
+            item {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                    Text(
+                        "「$query」的候选动词",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (coreMeaning.isNotBlank()) {
+                        Text(
+                            "识别为核心动词：$coreMeaning",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (error != null) {
+                        Text(error, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            items(candidates) { c ->
+                VerbCandidateCard(c, onSelect)
+            }
+        }
+    }
+}
+
+/** 单个候选动词卡片：不定式 + IPA + 词性 + 中文释义 + 例句，点击查看变位。 */
+@Composable
+private fun VerbCandidateCard(c: VerbCandidate, onSelect: (String) -> Unit) {
+    val context = LocalContext.current
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clickable { onSelect(c.infinitive) },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = {
+                    Speech.ensureInitialized(context)
+                    Speech.speakWithFeedback(context, c.infinitive)
+                },
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = "朗读 ${c.infinitive}",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(c.infinitive, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    if (c.ipa.isNotBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(c.ipa, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    if (c.pos.isNotBlank()) {
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.tertiaryContainer
+                        ) {
+                            Text(
+                                c.pos,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        }
+                    }
+                }
+                if (c.meaning.isNotBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(c.meaning, fontSize = 14.sp)
+                }
+                if (c.example.isNotBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(c.example, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Text("变位 ›", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+        }
+    }
 }

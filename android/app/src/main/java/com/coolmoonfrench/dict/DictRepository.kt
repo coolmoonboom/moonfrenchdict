@@ -32,6 +32,14 @@ data class DictEntry(
     }
 }
 
+/** 中文动词内存索引的一行：词典词形 + 词性 + 中文/英文释义。 */
+data class DbVerbRow(
+    val word: String,
+    val pos: String,
+    val zh: String,
+    val en: String
+)
+
 /**
  * 词典仓库。
  *
@@ -49,6 +57,11 @@ class DictRepository(private val context: Context) {
     private val indexLock = Any()
     @Volatile
     private var indexReady = false
+
+    // 供中文动词查询的内存索引（仅带中文释义的动词行，约 1 万条）
+    private var verbRows: List<DbVerbRow> = emptyList()
+    @Volatile
+    private var verbIndexReady = false
 
     /**
      * 确保数据库就绪：首次把 assets 中的 dictionary.db 拷贝到应用目录并打开。
@@ -85,6 +98,49 @@ class DictRepository(private val context: Context) {
 
     /** 后台线程构建索引（首屏显示后调用） */
     suspend fun ensureIndexInBackground() = withContext(Dispatchers.IO) { ensureIndex() }
+
+    /**
+     * 构建中文动词内存索引（只取带中文释义的动词行，幂等）。
+     * 全表扫描但已用 zh<>'' 过滤，约 1 万条，耗时可控。
+     */
+    fun ensureChineseVerbIndex() {
+        if (verbIndexReady) return
+        synchronized(indexLock) {
+            if (verbIndexReady) return
+            dbHelper.readableDatabase.rawQuery(
+                "SELECT word, pos, zh, en FROM dict " +
+                    "WHERE zh IS NOT NULL AND zh<>'' AND (pos='verb' OR pos LIKE 'v.%')",
+                null
+            ).use { c ->
+                val rows = ArrayList<DbVerbRow>(12000)
+                while (c.moveToNext()) {
+                    rows.add(
+                        DbVerbRow(
+                            word = c.getString(0) ?: "",
+                            pos = c.getString(1) ?: "",
+                            zh = c.getString(2) ?: "",
+                            en = c.getString(3) ?: ""
+                        )
+                    )
+                }
+                verbRows = rows
+            }
+            verbIndexReady = true
+        }
+    }
+
+    /**
+     * 中文查询本地候选：在动词中文释义上做最长公共子串匹配，按相关度排序。
+     * 支持中文词（喜欢）与中文短语（我喜欢你）两种粒度。
+     */
+    suspend fun searchVerbsByChinese(query: String, limit: Int = ChineseVerbSearch.MAX_CANDIDATES): List<VerbCandidate> {
+        val q = query.trim()
+        if (q.isEmpty() || limit <= 0) return emptyList()
+        withContext(Dispatchers.IO) { ensureChineseVerbIndex() }
+        val rows = verbRows
+        if (rows.isEmpty()) return emptyList()
+        return withContext(Dispatchers.Default) { VerbCandidateRanker.rankLocal(rows, q, limit) }
+    }
 
     /**
      * 首次启动时把 assets 中的预构建 dictionary.db 拷贝到应用数据库目录。
