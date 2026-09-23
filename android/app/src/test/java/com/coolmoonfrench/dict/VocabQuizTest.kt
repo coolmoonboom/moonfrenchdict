@@ -13,7 +13,6 @@ class VocabQuizTest {
             word = word,
             pos = if (isVerb) "v." else "n.",
             level = level,
-            themes = emptyList(),
             meaning = meaning,
             isVerb = isVerb
         )
@@ -30,11 +29,10 @@ class VocabQuizTest {
         )
         val q = VocabQuiz.build(pool[0], pool, pool, Random(1), true)!!
         assertEquals(4, q.options.size)
-        // 正确答案唯一对应 target（洗牌后 answerIndex 不固定为 0）
         assertEquals("bonjour", q.options[q.answerIndex].entry.word)
         assertEquals("你好", q.options[q.answerIndex].text)
         val texts = q.options.map { it.text }
-        assertEquals(texts.distinct().size, 4) // 各选项文本互不重复
+        assertEquals(texts.distinct().size, 4)
         assertTrue(q.prompt == "bonjour")
     }
 
@@ -59,7 +57,6 @@ class VocabQuizTest {
         val b2 = (1..6).map { entry("b$it", "义项b$it", "B2") }
         val pool = a1 + b2
         val q = VocabQuiz.build(a1[0], pool, pool, Random(3), true)!!
-        // 干扰项文本不重复于正确答案
         val texts = q.options.map { it.text }
         assertEquals(4, texts.distinct().size)
         assertNotEquals(q.options[q.answerIndex].text, texts[(q.answerIndex + 1) % 4])
@@ -87,18 +84,20 @@ class VocabQuizTest {
     @Test
     fun `parse vocab json`() {
         val json = """
-            {"version":1,"themes":[["food","食材食物","Les aliments"]],
-            "words":[["chat","n.m.","A1","","猫",0],["manger","v.","A1","food","吃",1]]}
+            {"version":2,"levels":[["A1","A1"],["S8","专八"]],
+            "words":[["chat","n.m.","A1","猫",0],["manger","v.","A1","吃",1],["rare","adj.","S8","稀有的",0]]}
         """.trimIndent()
         val book = VocabBook.parse(json)
-        assertEquals(1, book.themes.size)
-        assertEquals(2, book.entries.size)
+        assertEquals(2, book.levels.size)
+        assertEquals("专八", book.levels[1].label)
+        assertEquals(3, book.entries.size)
         assertEquals("chat", book.entries[0].word)
         assertEquals("A1", book.entries[0].level)
         assertEquals(false, book.entries[0].isVerb)
         assertTrue(book.entries[1].isVerb)
-        assertEquals(listOf("food"), book.entries[1].themes)
-        assertEquals(listOf("chat"), book.pool(false, emptySet(), emptySet()).map { it.word })
-        assertEquals(0, book.pool(true, setOf("B2"), emptySet()).size)
+        assertEquals(listOf("chat", "rare"), book.pool(false, VocabData.ALL).map { it.word })
+        assertEquals(listOf("manger"), book.pool(true, "A1").map { it.word })
+        assertEquals(1, book.pool(false, "S8").size)
+        assertEquals("全部词汇", book.labelOf(VocabData.ALL))
     }
 }

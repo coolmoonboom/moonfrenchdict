@@ -53,14 +53,13 @@ class VocabSrsTest {
     }
 
     @Test
-    fun `bookId differs across mode level and theme`() {
-        val w = VocabSrs.bookId(false, emptySet(), emptySet())
-        val v = VocabSrs.bookId(true, emptySet(), emptySet())
-        assertEquals("w.all.all", w)
-        assertEquals("v.all.all", v)
-        assertNotEquals(w, v)
+    fun `bookKey differs across mode and level`() {
+        val wAll = VocabSrs.bookKey(false, VocabData.ALL)
+        val vAll = VocabSrs.bookKey(true, VocabData.ALL)
+        assertEquals("w.all", wAll)
+        assertEquals("v.all", vAll)
+        assertNotEquals(wAll, vAll)
 
-        val themed = VocabSrs.bookId(false, setOf("A1", "B2"), setOf("food", "travel"))
-        assertEquals("w.A1-B2.food-travel", themed)
+        assertEquals("w.S8", VocabSrs.bookKey(false, "S8"))
     }
 }

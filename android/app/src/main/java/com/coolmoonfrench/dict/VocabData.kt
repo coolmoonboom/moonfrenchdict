@@ -4,77 +4,78 @@ import android.content.Context
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 
+/** 单词书级别（A1…C2、专八） */
+data class VocabLevel(val id: String, val label: String)
+
 /** 词书条目（来自 assets/vocab/vocab.json，tools/build_vocab_assets.py 生成） */
 data class VocabEntry(
     val word: String,
     val pos: String,
     val level: String,
-    val themes: List<String>,
     val meaning: String,
     val isVerb: Boolean
 )
 
-/** 主题定义 */
-data class VocabTheme(val id: String, val zh: String, val fr: String)
-
 /**
- * 一本离线词书：全部词表按「背诵模式 × 难度等级 × 主题」筛选出出题池。
+ * 一本离线词书：全部词表按「背诵模式 × 难度级别」组成单词书。
+ * JSON 数组序 [w, pos, level, 中文简义, isVerb01]。
  */
 class VocabBook(
-    val themes: List<VocabTheme>,
+    val levels: List<VocabLevel>,
     val entries: List<VocabEntry>
 ) {
-    private val verbsOnly: List<VocabEntry> = entries.filter { it.isVerb }
-    private val wordsOnly: List<VocabEntry> = entries.filter { !it.isVerb }
-    val themeById: Map<String, VocabTheme> = themes.associateBy { it.id }
+    private val verbsOnly: List<VocabEntry> by lazy { entries.filter { it.isVerb } }
+    private val wordsOnly: List<VocabEntry> by lazy { entries.filter { !it.isVerb } }
+    private val levelById: Map<String, VocabLevel> = levels.associateBy { it.id }
 
-    /**
-     * 出题池。
-     * @param verbMode true=背动词，false=背单词
-     * @param levels 选中的难度等级；空集合表示不限
-     * @param themes 选中的主题；空集合表示不限
-     */
-    fun pool(verbMode: Boolean, levels: Set<String>, themes: Set<String>): List<VocabEntry> {
-        val base = if (verbMode) verbsOnly else wordsOnly
-        return base.filter { e ->
-            (levels.isEmpty() || e.level in levels) &&
-                (themes.isEmpty() || e.themes.any { it in themes })
-        }
+    /** 所有法语词（用于详情页收藏等），按模式过滤 */
+    fun base(verbMode: Boolean): List<VocabEntry> = if (verbMode) verbsOnly else wordsOnly
+
+    /** 出题池：一本单词书 = 一个难度级别；levelId 为空表示全部级别 */
+    fun pool(verbMode: Boolean, levelId: String): List<VocabEntry> {
+        val b = base(verbMode)
+        return if (levelId.isEmpty() || levelId == VocabData.ALL) b
+        else b.filter { it.level == levelId }
+    }
+
+    /** 级别显示名 */
+    fun labelOf(levelId: String): String = when {
+        levelId.isEmpty() || levelId == VocabData.ALL -> "全部词汇"
+        else -> levelById[levelId]?.label ?: levelId
     }
 
     companion object {
-        /** JSON 数组序 [w, pos, level, themesCSV, 中文简义, isVerb01] */
         fun parse(json: String): VocabBook {
             val root = JSONObject(json)
-            val themeArr = root.optJSONArray("themes") ?: org.json.JSONArray()
-            val themes = (0 until themeArr.length()).map { i ->
-                val a = themeArr.getJSONArray(i)
-                VocabTheme(a.optString(0), a.optString(1), a.optString(2))
+            val lvArr = root.optJSONArray("levels") ?: org.json.JSONArray()
+            val levels = (0 until lvArr.length()).map { i ->
+                val a = lvArr.getJSONArray(i)
+                VocabLevel(a.optString(0), a.optString(1))
             }
             val wordArr = root.getJSONArray("words")
             val entries = ArrayList<VocabEntry>(wordArr.length())
             for (i in 0 until wordArr.length()) {
                 val a = wordArr.getJSONArray(i)
-                val themesCsv = a.optString(3)
                 entries += VocabEntry(
                     word = a.optString(0),
                     pos = a.optString(1),
                     level = a.optString(2),
-                    themes = if (themesCsv.isEmpty()) emptyList() else themesCsv.split(','),
-                    meaning = a.optString(4),
-                    isVerb = a.optInt(5) == 1
+                    meaning = a.optString(3),
+                    isVerb = a.optInt(4) == 1
                 )
             }
-            return VocabBook(themes, entries)
+            return VocabBook(levels, entries)
         }
     }
 }
 
 /** 词书资产加载（进程内缓存，只读一次 assets） */
 object VocabData {
-    val LEVELS = listOf("A1", "A2", "B1", "B2", "C1", "C2")
     const val MODE_WORDS = 0
     const val MODE_VERBS = 1
+
+    /** 表示不限制级别（全部词汇） */
+    const val ALL = ""
 
     private val cached = AtomicReference<VocabBook?>(null)
 

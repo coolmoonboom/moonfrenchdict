@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -37,115 +38,452 @@ private enum class VocabDir(val label: String) {
     MIX("混合")
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** 页面路由 */
+private sealed class VocabRoute {
+    object Home : VocabRoute()
+    class WordList(val words: List<VocabEntry>, val title: String) : VocabRoute()
+    class Detail(val words: List<VocabEntry>, val index: Int, val listTitle: String) : VocabRoute()
+    object Quiz : VocabRoute()
+}
+
 @Composable
 fun VocabScreen(mode: Int, onExit: () -> Unit) {
     val context = LocalContext.current
     val book = remember { VocabData.load(context) }
-
     val isVerbs = mode == VocabData.MODE_VERBS
+    val title = if (isVerbs) "背动词" else "背单词"
+
     val prefsName = if (isVerbs) "vocab_prefs_v" else "vocab_prefs_w"
     val prefs = remember { context.applicationContext.getSharedPreferences(prefsName, 0) }
 
-    var levels by remember { mutableStateOf(prefs.getStringSet("levels", emptySet()) ?: emptySet()) }
-    var themes by remember { mutableStateOf(prefs.getStringSet("themes", emptySet()) ?: emptySet()) }
+    var levelId by remember { mutableStateOf(prefs.getString("level", VocabData.ALL) ?: VocabData.ALL) }
     var direction by remember {
         mutableStateOf(VocabDir.entries.getOrElse(prefs.getInt("dir", VocabDir.MIX.ordinal)) { VocabDir.MIX })
     }
 
-    var inQuiz by remember { mutableStateOf(false) }
-    var session by remember { mutableStateOf<Pair<VocabSrs, List<VocabEntry>>?>(null) }
+    var route by remember { mutableStateOf<VocabRoute>(VocabRoute.Home) }
+    var refresh by remember { mutableIntStateOf(0) }
 
-    fun saveSelection() {
-        prefs.edit()
-            .putStringSet("levels", levels)
-            .putStringSet("themes", themes)
-            .putInt("dir", direction.ordinal)
-            .apply()
-    }
+    val srs = remember(levelId) { VocabSrs(context, VocabSrs.bookKey(isVerbs, levelId)) }
+    val pool = remember(levelId) { book.pool(isVerbs, levelId) }
 
-    if (!inQuiz) {
-        VocabSetupView(
-            context = context,
-            book = book,
-            title = if (isVerbs) "背动词" else "背单词",
-            verbMode = isVerbs,
-            levels = levels,
-            onToggleLevel = { l ->
-                levels = levels.toMutableSet().apply { if (l in this) remove(l) else add(l) }
-                saveSelection()
-            },
-            themes = themes,
-            onToggleTheme = { t ->
-                themes = themes.toMutableSet().apply { if (t in this) remove(t) else add(t) }
-                saveSelection()
-            },
-            onClearFilters = {
-                levels = emptySet()
-                themes = emptySet()
-                saveSelection()
-            },
-            direction = direction,
-            onDirectionChange = {
-                direction = it
-                saveSelection()
-            },
-            onResetProgress = {
-                VocabSrs(context, VocabSrs.bookId(isVerbs, levels, themes)).reset()
-                Toast.makeText(context, "已重置本书记忆进度", Toast.LENGTH_SHORT).show()
-            },
-            onStart = {
-                val p = book.pool(isVerbs, levels, themes)
-                if (p.size < 4) {
-                    Toast.makeText(context, "当前词书词量不足，请放宽筛选条件", Toast.LENGTH_SHORT).show()
-                    return@VocabSetupView
+    when (val r = route) {
+        is VocabRoute.Home -> {
+            VocabHomeView(
+                context = context,
+                book = book,
+                title = title,
+                verbMode = isVerbs,
+                levelId = levelId,
+                direction = direction,
+                pool = pool,
+                srs = srs,
+                refreshKey = refresh,
+                onLevelChange = {
+                    levelId = it
+                    prefs.edit().putString("level", it).apply()
+                },
+                onDirectionChange = {
+                    direction = it
+                    prefs.edit().putInt("dir", it.ordinal).apply()
+                },
+                onOpenWords = { words, t -> route = VocabRoute.WordList(words, t) },
+                onStart = { route = VocabRoute.Quiz },
+                onBack = onExit
+            )
+        }
+
+        is VocabRoute.WordList -> {
+            VocabListScreen(
+                title = r.title,
+                words = r.words,
+                onOpen = { i -> route = VocabRoute.Detail(r.words, i, r.title) },
+                onBack = { route = VocabRoute.Home }
+            )
+        }
+
+        is VocabRoute.Detail -> {
+            VocabDetailScreen(
+                words = r.words,
+                initialIndex = r.index,
+                onNavigate = { i -> route = VocabRoute.Detail(r.words, i, r.listTitle) },
+                onBack = { route = VocabRoute.WordList(r.words, r.listTitle) }
+            )
+        }
+
+        is VocabRoute.Quiz -> {
+            VocabQuizScreen(
+                mode = mode,
+                title = title,
+                srs = srs,
+                pool = pool,
+                all = book.base(isVerbs),
+                direction = direction,
+                newLimit = srs.dailyPlan(),
+                onFinish = {
+                    refresh++
+                    route = VocabRoute.Home
                 }
-                val s = VocabSrs(context, VocabSrs.bookId(isVerbs, levels, themes))
-                val q = s.buildSession(p, DAILY_NEW)
-                if (q.isEmpty()) {
-                    Toast.makeText(context, "今日待学词已全部完成，明天再来吧", Toast.LENGTH_SHORT).show()
-                    return@VocabSetupView
-                }
-                session = s to q
-                inQuiz = true
-            },
-            onBack = onExit
-        )
-        return
+            )
+        }
     }
-
-    val cur = session
-    if (cur == null) {
-        inQuiz = false
-        return
-    }
-
-    VocabQuizContent(
-        mode = mode,
-        srs = cur.first,
-        initialQueue = cur.second,
-        pool = book.pool(isVerbs, levels, themes),
-        all = book.entries,
-        direction = direction,
-        onBackToSetup = { inQuiz = false },
-        onExit = onExit
-    )
 }
 
-/** 答题/结果视图：独立组合位置，保证每次进入状态从零开始 */
+// ------------------------------------------------------------------ 单词书首页
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun VocabHomeView(
+    context: android.content.Context,
+    book: VocabBook,
+    title: String,
+    verbMode: Boolean,
+    levelId: String,
+    direction: VocabDir,
+    pool: List<VocabEntry>,
+    srs: VocabSrs,
+    refreshKey: Int,
+    onLevelChange: (String) -> Unit,
+    onDirectionChange: (VocabDir) -> Unit,
+    onOpenWords: (List<VocabEntry>, String) -> Unit,
+    onStart: () -> Unit,
+    onBack: () -> Unit
+) {
+    val stats = remember(pool, refreshKey) { srs.stats(pool) }
+    var plan by remember(levelId) { mutableIntStateOf(srs.dailyPlan()) }
+    val newTodo = if (plan > 0) minOf(stats.notStarted, plan) else 0
+    val dueTodo = stats.due
+
+    var showBooks by remember { mutableStateOf(false) }
+    var showPlan by remember { mutableStateOf(false) }
+    var confirmReset by remember { mutableStateOf(false) }
+
+    BackHandler { onBack() }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(
+                "${book.base(verbMode).size} 词",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 16.dp)
+            )
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // 当前单词书 + 更换
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("当前单词书", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                book.labelOf(levelId),
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                        OutlinedButton(onClick = { showBooks = true }) { Text("更换") }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    ThreeColorBar(stats)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        LegendDot(Color(0xFF2E7D32), "已掌握 ${stats.mastered}")
+                        LegendDot(Color(0xFFE6A700), "学习中 ${stats.learning}")
+                        LegendDot(MaterialTheme.colorScheme.outline, "未学习 ${stats.notStarted}")
+                    }
+                }
+            }
+
+            // 待学习新词 / 待复习
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                BigCountCard(
+                    modifier = Modifier.weight(1f),
+                    count = newTodo,
+                    label = "待学习新词",
+                    accent = MaterialTheme.colorScheme.primary,
+                    onClick = {
+                        onOpenWords(srs.newWords(pool).take(if (plan > 0) plan else Int.MAX_VALUE), "待学习新词")
+                    }
+                )
+                BigCountCard(
+                    modifier = Modifier.weight(1f),
+                    count = dueTodo,
+                    label = "待复习",
+                    accent = Color(0xFFE6A700),
+                    onClick = { onOpenWords(srs.dueWords(pool), "待复习") }
+                )
+            }
+
+            // 每日计划
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable { showPlan = true }.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("每日学习计划", fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            if (plan > 0) "每天背 $plan 个新词" else "未设置（点按设置）",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text("调整", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+
+            // 出题方向
+            Text("出题方向", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                VocabDir.entries.forEach { d ->
+                    FilterChip(
+                        selected = d == direction,
+                        onClick = { onDirectionChange(d) },
+                        label = { Text(d.label) }
+                    )
+                }
+            }
+
+            Button(
+                onClick = {
+                    val q = srs.buildSession(pool, plan)
+                    if (q.isEmpty()) {
+                        Toast.makeText(context, "今日待学词已全部完成，明天再来吧", Toast.LENGTH_SHORT).show()
+                    } else {
+                        onStart()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                enabled = pool.size >= 4 && (dueTodo > 0 || newTodo > 0)
+            ) {
+                Text("开始学习", fontSize = 17.sp)
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { confirmReset = true }) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("重置本书进度")
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+
+    if (showBooks) {
+        AlertDialog(
+            onDismissRequest = { showBooks = false },
+            title = { Text("更换单词书") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    val opts = listOf(VocabData.ALL to "全部词汇") +
+                        book.levels.map { it.id to it.label }
+                    opts.forEach { (id, label) ->
+                        val count = book.pool(verbMode, id).size
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    onLevelChange(id)
+                                    showBooks = false
+                                }
+                                .padding(vertical = 10.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = id == levelId, onClick = {
+                                onLevelChange(id)
+                                showBooks = false
+                            })
+                            Text(label, modifier = Modifier.weight(1f), fontSize = 15.sp)
+                            Text(
+                                "$count 词",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showBooks = false }) { Text("关闭") }
+            }
+        )
+    }
+
+    if (showPlan) {
+        AlertDialog(
+            onDismissRequest = { showPlan = false },
+            title = { Text("每日学习计划") },
+            text = {
+                Column {
+                    Text("设置每天要背的新词数量。", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                    listOf(0, 10, 20, 30, 50, 100).forEach { n ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    plan = n
+                                    srs.setDailyPlan(n)
+                                    showPlan = false
+                                }
+                                .padding(vertical = 8.dp, horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = n == plan, onClick = {
+                                plan = n
+                                srs.setDailyPlan(n)
+                                showPlan = false
+                            })
+                            Text(if (n == 0) "不设置" else "每天 $n 个", fontSize = 15.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showPlan = false }) { Text("取消") } }
+        )
+    }
+
+    if (confirmReset) {
+        AlertDialog(
+            onDismissRequest = { confirmReset = false },
+            title = { Text("重置记忆进度") },
+            text = { Text("将清空当前单词书内所有词的复习排期，重新开始，确定吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    srs.reset()
+                    confirmReset = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmReset = false }) { Text("取消") }
+            }
+        )
+    }
+}
+
+/** 三色进度条：已掌握 / 学习中 / 未学习 */
+@Composable
+private fun ThreeColorBar(stats: VocabStats) {
+    val total = stats.total.coerceAtLeast(1)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(12.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+    ) {
+        if (stats.mastered > 0) {
+            Box(
+                Modifier
+                    .weight(stats.mastered.toFloat() / total)
+                    .fillMaxHeight()
+                    .background(Color(0xFF2E7D32))
+            )
+        }
+        if (stats.learning > 0) {
+            Box(
+                Modifier
+                    .weight(stats.learning.toFloat() / total)
+                    .fillMaxHeight()
+                    .background(Color(0xFFE6A700))
+            )
+        }
+    }
+}
+
+@Composable
+private fun LegendDot(color: Color, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(color)
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun BigCountCard(
+    modifier: Modifier,
+    count: Int,
+    label: String,
+    accent: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(14.dp),
+        onClick = onClick
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "$count",
+                fontSize = 30.sp,
+                fontWeight = FontWeight.Bold,
+                color = accent
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
+// ------------------------------------------------------------------ 答题
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun VocabQuizContent(
+private fun VocabQuizScreen(
     mode: Int,
+    title: String,
     srs: VocabSrs,
-    initialQueue: List<VocabEntry>,
     pool: List<VocabEntry>,
     all: List<VocabEntry>,
     direction: VocabDir,
-    onBackToSetup: () -> Unit,
-    onExit: () -> Unit
+    newLimit: Int,
+    onFinish: () -> Unit
 ) {
     val context = LocalContext.current
+    val initialQueue = remember { srs.buildSession(pool, newLimit) }
 
     var queue by remember { mutableStateOf(initialQueue) }
     var index by remember { mutableIntStateOf(0) }
@@ -158,7 +496,6 @@ private fun VocabQuizContent(
 
     val target = queue.getOrNull(index)
 
-    // 载入当前题目
     LaunchedEffect(target) {
         if (target == null) {
             finished = true
@@ -177,7 +514,6 @@ private fun VocabQuizContent(
 
     val current = question
 
-    // 加载 AI 例句（仅法→中方向展示）
     LaunchedEffect(current?.target?.word, current?.frenchToFront) {
         val w = current?.target?.word ?: return@LaunchedEffect
         if (!current.frenchToFront || VocabExamples.isConfigured(context).not()) {
@@ -208,7 +544,6 @@ private fun VocabQuizContent(
         }
     }
 
-    // 答对自动进入下一题
     LaunchedEffect(selected) {
         if (selected != null && current != null && selected == current.answerIndex) {
             delay(900)
@@ -217,15 +552,15 @@ private fun VocabQuizContent(
     }
 
     if (finished) {
-        val stats = srs.progress(pool)
+        val stats = srs.stats(pool)
         VocabResultView(
-            mode = mode,
+            title = title,
             correctCount = correctCount,
             total = queue.size,
-            learned = stats[0],
-            mastered = stats[1],
+            learned = stats.learned,
+            mastered = stats.mastered,
             onRestart = {
-                val q = srs.buildSession(pool, DAILY_NEW)
+                val q = srs.buildSession(pool, newLimit)
                 if (q.isEmpty()) {
                     Toast.makeText(context, "今日待学词已全部完成，明天再来吧", Toast.LENGTH_SHORT).show()
                     return@VocabResultView
@@ -239,38 +574,30 @@ private fun VocabQuizContent(
                 example = null
                 finished = false
             },
-            onBackToSetup = onBackToSetup,
-            onExit = onExit
+            onBackToSetup = onFinish
         )
         return
     }
 
     if (queue.isEmpty()) {
-        onBackToSetup()
+        onFinish()
         return
     }
 
-    BackHandler { onBackToSetup() }
+    BackHandler { onFinish() }
 
     val answered = selected != null
     val isCorrect = answered && selected == current?.answerIndex
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onBackToSetup) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回选书")
+            IconButton(onClick = onFinish) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
-            Text(
-                if (mode == VocabData.MODE_VERBS) "背动词" else "背单词",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f)
-            )
+            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Text(
                 "答对 $correctCount",
                 fontSize = 13.sp,
@@ -299,7 +626,6 @@ private fun VocabQuizContent(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // 顶部目标卡片：法→中显示法语词+IPA+例句，中→法显示中文词义
                 TargetCard(
                     question = current,
                     example = example,
@@ -313,7 +639,6 @@ private fun VocabQuizContent(
                     }
                 )
 
-                // 选项 a/b/c/d
                 current.options.forEachIndexed { oi, option ->
                     val isThisCorrect = oi == current.answerIndex
                     val isThisSelected = oi == selected
@@ -326,9 +651,7 @@ private fun VocabQuizContent(
                     }
 
                     val letter = ('a' + oi).toString()
-                    // 中→法：长按或作答后显示该选项的中文释义
-                    val showZh = current.frenchToFront.not() &&
-                        (answered || (oi == longPressed))
+                    val showZh = current.frenchToFront.not() && (answered || (oi == longPressed))
                     val expandedZh = if (showZh) option.entry.meaning else ""
 
                     Row(
@@ -380,7 +703,6 @@ private fun VocabQuizContent(
                             }
                         }
 
-                        // 中→法：法语选项带发音按钮
                         if (current.frenchToFront.not()) {
                             IconButton(onClick = {
                                 Espeak.speakWithFeedback(context, option.entry.word, deterministic = true)
@@ -396,7 +718,6 @@ private fun VocabQuizContent(
                     }
                 }
 
-                // 答错：提示正确项 + 下一题按钮
                 if (answered && !isCorrect) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -468,10 +789,7 @@ private fun TargetCard(
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(
-                    onClick = onSpeakWord,
-                    modifier = Modifier.size(36.dp)
-                ) {
+                IconButton(onClick = onSpeakWord, modifier = Modifier.size(36.dp)) {
                     Icon(
                         Icons.AutoMirrored.Filled.VolumeUp,
                         contentDescription = "朗读单词",
@@ -527,192 +845,17 @@ private fun TargetCard(
     }
 }
 
-/** 选书页 */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun VocabSetupView(
-    context: android.content.Context,
-    book: VocabBook,
-    title: String,
-    verbMode: Boolean,
-    levels: Set<String>,
-    onToggleLevel: (String) -> Unit,
-    themes: Set<String>,
-    onToggleTheme: (String) -> Unit,
-    onClearFilters: () -> Unit,
-    direction: VocabDir,
-    onDirectionChange: (VocabDir) -> Unit,
-    onResetProgress: () -> Unit,
-    onStart: () -> Unit,
-    onBack: () -> Unit
-) {
-    val poolSize = remember(levels, themes, verbMode) {
-        book.pool(verbMode, levels, themes).size
-    }
-    val progress = remember(levels, themes, verbMode) {
-        VocabSrs(
-            context,
-            VocabSrs.bookId(verbMode, levels, themes)
-        ).progress(book.pool(verbMode, levels, themes))
-    }
-    var confirmReset by remember { mutableStateOf(false) }
-
-    BackHandler { onBack() }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-            }
-            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            Text(
-                "${book.entries.size} 词",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(end = 16.dp)
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text(
-                "选择难度、主题组成你的单词书。答错的词会按艾宾浩斯曲线复现，更换单词书则重新排期。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp
-            )
-
-            Text("难度（不选=全部）", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                VocabData.LEVELS.forEach { lvl ->
-                    FilterChip(
-                        selected = lvl in levels,
-                        onClick = { onToggleLevel(lvl) },
-                        label = { Text(lvl) }
-                    )
-                }
-            }
-
-            Text("主题（不选=全部主题）", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                book.themes.forEach { t ->
-                    FilterChip(
-                        selected = t.id in themes,
-                        onClick = { onToggleTheme(t.id) },
-                        label = { Text(t.zh) }
-                    )
-                }
-            }
-            if (themes.isNotEmpty() || levels.isNotEmpty()) {
-                TextButton(onClick = onClearFilters) {
-                    Text("清除筛选（选择全部）")
-                }
-            }
-
-            Text("出题方向", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                VocabDir.entries.forEach { d ->
-                    FilterChip(
-                        selected = d == direction,
-                        onClick = { onDirectionChange(d) },
-                        label = { Text(d.label) }
-                    )
-                }
-            }
-
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        "本词书共 $poolSize 词",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        "已学 ${progress[0]} / 已掌握 ${progress[1]}",
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Button(
-                onClick = onStart,
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                enabled = poolSize >= 4
-            ) {
-                Text("开始练习", fontSize = 16.sp)
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = { confirmReset = true }) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("重置本书记忆进度")
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-        }
-    }
-
-    if (confirmReset) {
-        AlertDialog(
-            onDismissRequest = { confirmReset = false },
-            title = { Text("重置记忆进度") },
-            text = { Text("将清空当前单词书内所有词的复习排期，重新开始，确定吗？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmReset = false
-                    onResetProgress()
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmReset = false }) { Text("取消") }
-            }
-        )
-    }
-}
-
 /** 练习结果页 */
 @Composable
 private fun VocabResultView(
-    mode: Int,
+    title: String,
     correctCount: Int,
     total: Int,
     learned: Int,
     mastered: Int,
     onRestart: () -> Unit,
-    onBackToSetup: () -> Unit,
-    onExit: () -> Unit
+    onBackToSetup: () -> Unit
 ) {
-    val title = if (mode == VocabData.MODE_VERBS) "背动词" else "背单词"
     val percent = if (total > 0) correctCount * 100 / total else 0
     val head = when {
         percent >= 90 -> "太棒了！"
@@ -743,13 +886,7 @@ private fun VocabResultView(
         }
         Spacer(Modifier.height(12.dp))
         OutlinedButton(onClick = onBackToSetup, modifier = Modifier.fillMaxWidth().height(48.dp)) {
-            Text("更换单词书")
-        }
-        Spacer(Modifier.height(12.dp))
-        TextButton(onClick = onExit) {
-            Text("返回语法学习")
+            Text("返回单词书")
         }
     }
 }
-
-private const val DAILY_NEW = 15

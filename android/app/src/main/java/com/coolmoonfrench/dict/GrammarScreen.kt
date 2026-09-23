@@ -37,8 +37,10 @@ fun GrammarScreen(onExit: () -> Unit) {
     // 预读词书资产（非阻塞，纯内存解析）
     val vocabBook = remember { VocabData.load(context) }
     val vocabCounts = remember {
-        val skim = vocabBook.pool(false, emptySet(), emptySet())
-        intArrayOf(skim.size, vocabBook.pool(true, emptySet(), emptySet()).size)
+        intArrayOf(
+            vocabBook.pool(false, VocabData.ALL).size,
+            vocabBook.pool(true, VocabData.ALL).size
+        )
     }
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
