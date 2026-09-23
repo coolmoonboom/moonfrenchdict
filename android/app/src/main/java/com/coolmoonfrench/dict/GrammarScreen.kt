@@ -12,6 +12,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.*
@@ -29,7 +31,15 @@ import androidx.compose.ui.unit.sp
 fun GrammarScreen(onExit: () -> Unit) {
     var categoryIndex by remember { mutableStateOf<Int?>(null) }
     var topicIndex by remember { mutableStateOf<Int?>(null) }
+    var vocabMode by remember { mutableStateOf<Int?>(null) }
     val context = LocalContext.current
+
+    // 预读词书资产（非阻塞，纯内存解析）
+    val vocabBook = remember { VocabData.load(context) }
+    val vocabCounts = remember {
+        val skim = vocabBook.pool(false, emptySet(), emptySet())
+        intArrayOf(skim.size, vocabBook.pool(true, emptySet(), emptySet()).size)
+    }
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞）
     LaunchedEffect(Unit) {
@@ -38,21 +48,29 @@ fun GrammarScreen(onExit: () -> Unit) {
 
     fun goUp() {
         when {
+            vocabMode != null -> vocabMode = null
             topicIndex != null -> topicIndex = null
             categoryIndex != null -> categoryIndex = null
             else -> onExit()
         }
     }
 
-    // 系统返回键：主题 → 分类 → 首页 → 退出，逐级返回
+    // 系统返回键：背词/主题 → 分类 → 首页 → 退出，逐级返回
     BackHandler { goUp() }
 
     val catIndex = categoryIndex
     val topIndex = topicIndex
     when {
+        vocabMode != null -> VocabScreen(
+            mode = vocabMode ?: VocabData.MODE_WORDS,
+            onExit = { vocabMode = null }
+        )
         catIndex == null -> GrammarHome(
             onBack = onExit,
-            onOpenCategory = { categoryIndex = it }
+            onOpenCategory = { categoryIndex = it },
+            vocabCounts = vocabCounts,
+            onOpenVocab = { vocabMode = VocabData.MODE_WORDS },
+            onOpenVerbs = { vocabMode = VocabData.MODE_VERBS }
         )
         topIndex == null -> GrammarCategoryView(
             category = GrammarContent.categories[catIndex],
@@ -108,11 +126,14 @@ private val categoryIcons: List<ImageVector> = listOf(
     Icons.AutoMirrored.Filled.Notes
 )
 
-/** 首页：三大板块入口 */
+/** 首页：背词练习 + 三大板块入口 */
 @Composable
 private fun GrammarHome(
     onBack: () -> Unit,
-    onOpenCategory: (Int) -> Unit
+    onOpenCategory: (Int) -> Unit,
+    vocabCounts: IntArray,
+    onOpenVocab: () -> Unit,
+    onOpenVerbs: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         GrammarHeader(title = "语法学习", onBack = onBack, trailing = "共 ${GrammarContent.categories.size} 板块")
@@ -124,9 +145,51 @@ private fun GrammarHome(
         ) {
             item {
                 Text(
-                    "按词法、动词、句法三大板块系统学习法语语法。点进板块选择主题，即可查看讲解、规则与例句。",
+                    "按词法、动词、句法三大板块系统学习法语语法。进板块选主题即可看讲解、规则与例句。下方还能按难度/主题背单词、背动词。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 13.sp
+                )
+            }
+
+            item {
+                Text(
+                    "背词练习",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            item {
+                CategoryEntryCard(
+                    icon = Icons.Filled.MenuBook,
+                    title = "背单词",
+                    intro = "按难度与主题记名词、形容词等常用词汇",
+                    count = vocabCounts[0],
+                    suffix = "词",
+                    onClick = onOpenVocab
+                )
+            }
+
+            item {
+                CategoryEntryCard(
+                    icon = Icons.Filled.Checklist,
+                    title = "背动词",
+                    intro = "按难度与主题记动词原形，例句辅助记忆",
+                    count = vocabCounts[1],
+                    suffix = "词",
+                    onClick = onOpenVerbs
+                )
+            }
+
+            item {
+                Text(
+                    "语法板块",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp)
                 )
             }
 
@@ -137,6 +200,7 @@ private fun GrammarHome(
                     fr = category.fr,
                     intro = category.intro,
                     count = category.topics.size,
+                    suffix = "讲",
                     onClick = { onOpenCategory(index) }
                 )
             }
@@ -150,9 +214,10 @@ private fun GrammarHome(
 private fun CategoryEntryCard(
     icon: ImageVector,
     title: String,
-    fr: String,
+    fr: String = "",
     intro: String,
     count: Int,
+    suffix: String,
     onClick: () -> Unit
 ) {
     Card(
@@ -183,15 +248,17 @@ private fun CategoryEntryCard(
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.width(6.dp))
-                    Text(fr, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                    if (fr.isNotBlank()) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(fr, fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
+                    }
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(intro, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.width(8.dp))
             Text(
-                "$count 讲",
+                "$count $suffix",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Medium
