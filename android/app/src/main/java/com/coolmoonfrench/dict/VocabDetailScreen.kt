@@ -26,7 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 单词详情：词形+音标、收藏、全部义项、AI 例句、上一曲/播放/下一曲 */
+/** 单词详情：词形+音标、收藏、全部义项、本地例句、上一曲/播放/下一曲 */
 @Composable
 fun VocabDetailScreen(
     words: List<VocabEntry>,
@@ -53,13 +53,8 @@ fun VocabDetailScreen(
         meanings = withContext(Dispatchers.IO) {
             repository.lookupExact(word).map { it.meaning }.filter { it.isNotBlank() }.distinct()
         }
-        example = null
-        if (word.isNotEmpty()) {
-            VocabExamples.cached(context, word)?.let { example = it }
-            if (example == null && VocabExamples.isConfigured(context)) {
-                VocabExamples.generate(context, word)?.let { example = it }
-            }
-        }
+        example = if (word.isEmpty()) null
+        else withContext(Dispatchers.IO) { VocabExamples.lookup(context, word) }
     }
 
     fun speakWord() {
@@ -154,7 +149,7 @@ fun VocabDetailScreen(
             val ex = example
             if (ex == null) {
                 Text(
-                    if (VocabExamples.isConfigured(context)) "正在生成例句…" else "未配置大模型，暂无例句",
+                    "暂无例句",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

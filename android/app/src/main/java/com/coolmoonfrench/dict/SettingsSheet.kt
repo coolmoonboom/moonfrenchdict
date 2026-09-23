@@ -151,6 +151,17 @@ fun SettingsSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // 数据来源致谢
+            Text("数据来源", fontWeight = FontWeight.Medium, fontSize = 15.sp, modifier = Modifier.padding(top = 8.dp))
+            Text(
+                VocabExamples.ATTRIBUTION,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
         }
     }
 }

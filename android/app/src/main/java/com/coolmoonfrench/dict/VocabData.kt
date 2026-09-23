@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicReference
 
-/** 单词书级别（A1…C2、专八） */
+/** 单词书级别（A1…B2、专四/专八、高级法语） */
 data class VocabLevel(val id: String, val label: String)
 
 /** 词书条目（来自 assets/vocab/vocab.json，tools/build_vocab_assets.py 生成） */

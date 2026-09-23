@@ -4,12 +4,13 @@
 
 数据来源：
 - android/app/src/main/assets/dictionary.db （本地词典，word/pos/zh/en）
-- tools/data/fr_freq_50k.txt （法语词频表，仅用于推导 CEFR/专八分级）
+- tools/data/fr_full.txt （全量法语词频表，仅用于推导 CEFR/专八分级；缺失时退回 fr_freq_50k.txt）
   词频表来源：https://github.com/hermitdave/FrequencyWords (CC-BY-SA)
 
 分级策略：
-- 命中词频表的词按频率排名映射到 A1/A2/B1/B2/C1/C2；
-- 未命中词频表的词归入最高档「专八」（生僻但仍在词典收录范围内的进阶词）。
+- 动词与非动词各自按词频从高频到低频排序；
+- 按累计名额切分到 A1/A2/B1/B2/TFS4/TFS8（见 VERB_CUM / WORD_CUM）；
+- 未命中词频表或超出专八名额的词归入「高级法语」。
 
 产物：
 - android/app/src/main/assets/vocab/vocab.json
@@ -29,28 +30,39 @@ from datetime import date
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, "android/app/src/main/assets/dictionary.db")
-FREQ_PATH = os.path.join(ROOT, "tools/data/fr_freq_50k.txt")
+# 优先使用全量词频表（覆盖更广，保证分级名额能填满），缺失时退回 50k 版本
+FREQ_PATH = os.path.join(ROOT, "tools/data/fr_full.txt")
+FREQ_FALLBACK = os.path.join(ROOT, "tools/data/fr_freq_50k.txt")
 OUT_PATH = os.path.join(ROOT, "android/app/src/main/assets/vocab/vocab.json")
 
 # ---------------------------------------------------------------- 分级
+# 依据用户提供的 CEFR/专业大纲分级表（累计词汇量）：
+#   等级, 累计动词原形, 非动词词汇, 总词汇
+#   A1            100        430~450      500
+#   A2            160~200    800~840      1000
+#   B1            400~500    2100~2600    2500~3000
+#   B2            800~1000   4000~4200    5000
+#   专四 TFS4     1000~1200  4800~5000    6000
+#   专八 TFS8     1400~1600  8400~9600    10000~11000
+# 超出专八的剩余词统一进入「高级法语」。
+#
+# 动词与非动词各自按词频从高频到低频排序后按累计名额切分；未命中词频表的词
+# 视为低频，直接落入「高级法语」。
 LEVELS = [
     ("A1", "A1"),
     ("A2", "A2"),
     ("B1", "B1"),
     ("B2", "B2"),
-    ("C1", "C1"),
-    ("C2", "C2"),
-    ("S8", "专八"),
+    ("TFS4", "专四 TFS4"),
+    ("TFS8", "专八 TFS8"),
+    ("ADV", "高级法语"),
 ]
-LEVEL_RANKS = [
-    ("A1", 900),
-    ("A2", 2200),
-    ("B1", 5000),
-    ("B2", 10000),
-    ("C1", 20000),
-    ("C2", 50000),
-]
-RARE_LEVEL = "S8"
+# (等级 id, 该等级累计词数上限)
+VERB_CUM = [("A1", 100), ("A2", 180), ("B1", 450),
+            ("B2", 900), ("TFS4", 1100), ("TFS8", 1500)]
+WORD_CUM = [("A1", 440), ("A2", 820), ("B1", 2350),
+            ("B2", 4100), ("TFS4", 4900), ("TFS8", 9000)]
+ADV_LEVEL = "ADV"
 
 CJK = re.compile(r'[\u4e00-\u9fff]')
 
@@ -129,9 +141,9 @@ def norm(s: str) -> str:
     return ''.join(ch for ch in s if unicodedata.category(ch) != 'Mn')
 
 
-def load_freq():
+def load_freq(path):
     freq = {}
-    with open(FREQ_PATH, encoding='utf-8') as f:
+    with open(path, encoding='utf-8') as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -140,31 +152,40 @@ def load_freq():
             if len(parts) != 2:
                 continue
             try:
-                freq[parts[0]] = int(parts[1])
+                key = norm(parts[0])
+                cnt = int(parts[1])
             except ValueError:
                 continue
+            if key:
+                freq[key] = freq.get(key, 0) + cnt
     ordered = sorted(freq.items(), key=lambda kv: -kv[1])
     return {w: i for i, (w, _) in enumerate(ordered, 1)}
 
 
-def level_of(rank):
-    if rank is None:
-        return RARE_LEVEL
-    for lvl, hi in LEVEL_RANKS:
-        if rank <= hi:
-            return lvl
-    return RARE_LEVEL
+def assign_levels(candidates, cum):
+    """candidates 已按词频从高频到低频排序；按累计名额给出等级，超出部分归 ADV。"""
+    out = {}
+    for i, w in enumerate(candidates):
+        lvl = ADV_LEVEL
+        for lid, hi in cum:
+            if i < hi:
+                lvl = lid
+                break
+        out[w] = lvl
+    return out
 
 
 def main():
     if not os.path.exists(DB_PATH):
         print("缺少词典数据库:", DB_PATH, file=sys.stderr)
         return 1
-    if not os.path.exists(FREQ_PATH):
+    freq_path = FREQ_PATH if os.path.exists(FREQ_PATH) else FREQ_FALLBACK
+    if not os.path.exists(freq_path):
         print("缺少词频表:", FREQ_PATH, file=sys.stderr)
         return 1
+    print("词频表:", freq_path)
 
-    rank = load_freq()
+    rank = load_freq(freq_path)
     db = sqlite3.connect(DB_PATH)
     cur = db.cursor()
 
@@ -188,26 +209,44 @@ def main():
     verb_rows = query_words(VERB_TAGS, ending_filter=True)
     noun_rows = query_words(NONVERB_TAGS)
 
-    words = []
     stats = {"verb": 0, "word": 0, "bad": 0, "nofreq": 0}
 
-    def emit(w, pos, zh, is_verb):
-        r = rank.get(norm(w))
-        if r is None:
-            stats["nofreq"] += 1
-        m = clean_meaning(zh)
-        if not valid_meaning(m):
-            stats["bad"] += 1
-            return
-        stats["verb" if is_verb else "word"] += 1
-        words.append((w, pos, level_of(r), m, 1 if is_verb else 0))
+    def prep(rows):
+        """清洗释义（不合格丢弃），返回 {word: (pos, meaning)}。"""
+        out = {}
+        for w, (pos, zh) in rows.items():
+            m = clean_meaning(zh)
+            if not valid_meaning(m):
+                stats["bad"] += 1
+                continue
+            if norm(w) not in rank:
+                stats["nofreq"] += 1
+            out[w] = (pos, m)
+        return out
 
-    for w, (pos, zh) in verb_rows.items():
-        emit(w, pos, zh, True)
-    for w, (pos, zh) in noun_rows.items():
-        emit(w, pos, zh, False)
+    def ordered(rows):
+        """从易到难：命中词频的按频率从高到低；未收录词频的按长度再字母序。"""
+        known = sorted((w for w in rows if norm(w) in rank),
+                       key=lambda w: rank[norm(w)])
+        unknown = sorted((w for w in rows if norm(w) not in rank),
+                         key=lambda w: (len(w), w))
+        return known + unknown
 
-    words.sort(key=lambda x: (x[2], x[0]))
+    verb_all = prep(verb_rows)
+    word_all = prep(noun_rows)
+    verb_level = assign_levels(ordered(verb_all), VERB_CUM)
+    word_level = assign_levels(ordered(word_all), WORD_CUM)
+
+    words = []
+    for w, (pos, m) in verb_all.items():
+        words.append((w, pos, verb_level[w], m, 1))
+        stats["verb"] += 1
+    for w, (pos, m) in word_all.items():
+        words.append((w, pos, word_level[w], m, 0))
+        stats["word"] += 1
+
+    level_order = {lid: i for i, (lid, _) in enumerate(LEVELS)}
+    words.sort(key=lambda x: (level_order.get(x[2], 99), x[0]))
     out = {
         "version": 2,
         "generated": date.today().isoformat(),
@@ -227,6 +266,15 @@ def main():
     print("总词数:", len(words), "大小: %.1f KB" % (os.path.getsize(OUT_PATH) / 1024))
     print("分级:", {lid: by_level.get(lid, 0) for lid, _ in LEVELS})
     print("词/动词:", dict(by_kind))
+    print("--- 分级明细 (动词 / 非动词) ---")
+    cum_v = cum_w = 0
+    for lid, label in LEVELS:
+        v = sum(1 for w in words if w[2] == lid and w[4] == 1)
+        n = sum(1 for w in words if w[2] == lid and w[4] == 0)
+        cum_v += v
+        cum_w += n
+        print("  %-6s 动词 %5d (累计 %5d) · 非动词 %5d (累计 %5d) · 总 %5d"
+              % (lid, v, cum_v, n, cum_w, v + n))
     print("跳过(释义不合格):", stats["bad"], " (其中无词频):", stats["nofreq"])
     return 0
 

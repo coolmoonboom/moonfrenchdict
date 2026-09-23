@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,7 +30,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
 /** 出题方向 */
@@ -43,7 +47,8 @@ private sealed class VocabRoute {
     object Home : VocabRoute()
     class WordList(val words: List<VocabEntry>, val title: String) : VocabRoute()
     class Detail(val words: List<VocabEntry>, val index: Int, val listTitle: String) : VocabRoute()
-    object Quiz : VocabRoute()
+    object ReviewDays : VocabRoute()
+    class Quiz(val fixed: List<VocabEntry>?, val title: String) : VocabRoute()
 }
 
 @Composable
@@ -88,8 +93,19 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
                     prefs.edit().putInt("dir", it.ordinal).apply()
                 },
                 onOpenWords = { words, t -> route = VocabRoute.WordList(words, t) },
-                onStart = { route = VocabRoute.Quiz },
+                onStart = { route = VocabRoute.Quiz(null, if (isVerbs) "背动词" else "背单词") },
+                onReview = { route = VocabRoute.ReviewDays },
                 onBack = onExit
+            )
+        }
+
+        is VocabRoute.ReviewDays -> {
+            VocabReviewDaysScreen(
+                pool = pool,
+                srs = srs,
+                refreshKey = refresh,
+                onStart = { words, label -> route = VocabRoute.Quiz(words, label) },
+                onBack = { route = VocabRoute.Home }
             )
         }
 
@@ -113,13 +129,13 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
 
         is VocabRoute.Quiz -> {
             VocabQuizScreen(
-                mode = mode,
-                title = title,
+                title = r.title,
                 srs = srs,
                 pool = pool,
                 all = book.base(isVerbs),
                 direction = direction,
                 newLimit = srs.dailyPlan(),
+                fixed = r.fixed,
                 onFinish = {
                     refresh++
                     route = VocabRoute.Home
@@ -147,6 +163,7 @@ private fun VocabHomeView(
     onDirectionChange: (VocabDir) -> Unit,
     onOpenWords: (List<VocabEntry>, String) -> Unit,
     onStart: () -> Unit,
+    onReview: () -> Unit,
     onBack: () -> Unit
 ) {
     val stats = remember(pool, refreshKey) { srs.stats(pool) }
@@ -232,7 +249,7 @@ private fun VocabHomeView(
                     count = dueTodo,
                     label = "待复习",
                     accent = Color(0xFFE6A700),
-                    onClick = { onOpenWords(srs.dueWords(pool), "待复习") }
+                    onClick = onReview
                 )
             }
 
@@ -394,6 +411,113 @@ private fun VocabHomeView(
     }
 }
 
+// ------------------------------------------------------------------ 待复习（按天选择）
+
+@Composable
+private fun VocabReviewDaysScreen(
+    pool: List<VocabEntry>,
+    srs: VocabSrs,
+    refreshKey: Int,
+    onStart: (List<VocabEntry>, String) -> Unit,
+    onBack: () -> Unit
+) {
+    val groups = remember(pool, refreshKey) { srs.reviewGroups(pool) }
+    var selected by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    BackHandler { onBack() }
+
+    val chosen = remember(groups, selected) {
+        groups.filter { it.day in selected }.flatMap { it.words }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+            }
+            Text("待复习", fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(
+                "${groups.sumOf { it.words.size }} 词",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 16.dp)
+            )
+        }
+
+        if (groups.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "还没有学过的单词，先去背一些吧",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 14.sp
+                )
+            }
+            return@Column
+        }
+
+        Text(
+            "选择要复习的学习日（可多选），然后开始复习。",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+
+        LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            items(groups) { g ->
+                val checked = g.day in selected
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            selected = if (checked) selected - g.day else selected + g.day
+                        }
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = checked, onCheckedChange = {
+                        selected = if (checked) selected - g.day else selected + g.day
+                    })
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(dayLabel(g.day), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "${g.words.size} 词" + if (g.due > 0) " · 到期 ${g.due}" else " · 未到期",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            }
+        }
+
+        Surface(tonalElevation = 3.dp) {
+            Button(
+                onClick = { onStart(chosen, "待复习") },
+                enabled = chosen.isNotEmpty(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .height(50.dp)
+            ) {
+                Text(if (chosen.isEmpty()) "开始复习" else "开始复习（${chosen.size} 词）", fontSize = 17.sp)
+            }
+        }
+    }
+}
+
+/** 复习日标签：今天 / 昨天 / M月d日 */
+private fun dayLabel(day: Long): String {
+    val today = System.currentTimeMillis() / 86_400_000L
+    return when (day) {
+        today -> "今天"
+        today - 1 -> "昨天"
+        else -> java.text.SimpleDateFormat("M月d日", java.util.Locale.CHINA)
+            .format(java.util.Date(day * 86_400_000L))
+    }
+}
+
 /** 三色进度条：已掌握 / 学习中 / 未学习 */
 @Composable
 private fun ThreeColorBar(stats: VocabStats) {
@@ -473,17 +597,17 @@ private fun BigCountCard(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun VocabQuizScreen(
-    mode: Int,
     title: String,
     srs: VocabSrs,
     pool: List<VocabEntry>,
     all: List<VocabEntry>,
     direction: VocabDir,
     newLimit: Int,
+    fixed: List<VocabEntry>?,
     onFinish: () -> Unit
 ) {
     val context = LocalContext.current
-    val initialQueue = remember { srs.buildSession(pool, newLimit) }
+    val initialQueue = remember(fixed) { fixed ?: srs.buildSession(pool, newLimit) }
 
     var queue by remember { mutableStateOf(initialQueue) }
     var index by remember { mutableIntStateOf(0) }
@@ -514,18 +638,16 @@ private fun VocabQuizScreen(
 
     val current = question
 
-    LaunchedEffect(current?.target?.word, current?.frenchToFront) {
+    // 当前单词自动发音：开始背、切到下一题都会朗读
+    LaunchedEffect(current?.target?.word) {
         val w = current?.target?.word ?: return@LaunchedEffect
-        if (!current.frenchToFront || VocabExamples.isConfigured(context).not()) {
-            example = null
-            return@LaunchedEffect
-        }
-        VocabExamples.cached(context, w)?.let {
-            example = it
-            return@LaunchedEffect
-        }
-        val g = VocabExamples.generate(context, w)
-        if (g != null) example = g
+        Espeak.speakWithFeedback(context, w, deterministic = true)
+    }
+
+    // 本地例句（离线资产，不调用 AI）
+    LaunchedEffect(current?.target?.word) {
+        val w = current?.target?.word ?: return@LaunchedEffect
+        example = withContext(Dispatchers.IO) { VocabExamples.lookup(context, w) }
     }
 
     fun advance() {
@@ -544,6 +666,13 @@ private fun VocabQuizScreen(
         }
     }
 
+    /** 忽略当前词：进入待复习并跳到下一题 */
+    fun ignore() {
+        if (selected != null || current == null) return
+        srs.ignore(current.target.word)
+        advance()
+    }
+
     LaunchedEffect(selected) {
         if (selected != null && current != null && selected == current.answerIndex) {
             delay(900)
@@ -560,7 +689,7 @@ private fun VocabQuizScreen(
             learned = stats.learned,
             mastered = stats.mastered,
             onRestart = {
-                val q = srs.buildSession(pool, newLimit)
+                val q = fixed ?: srs.buildSession(pool, newLimit)
                 if (q.isEmpty()) {
                     Toast.makeText(context, "今日待学词已全部完成，明天再来吧", Toast.LENGTH_SHORT).show()
                     return@VocabResultView
@@ -629,6 +758,7 @@ private fun VocabQuizScreen(
                 TargetCard(
                     question = current,
                     example = example,
+                    showExample = current.frenchToFront || answered,
                     onSpeakWord = {
                         Espeak.speakWithFeedback(context, current.target.word, deterministic = true)
                     },
@@ -718,6 +848,15 @@ private fun VocabQuizScreen(
                     }
                 }
 
+                if (!answered) {
+                    OutlinedButton(
+                        onClick = { ignore() },
+                        modifier = Modifier.fillMaxWidth().height(46.dp)
+                    ) {
+                        Text("忽略", fontSize = 15.sp)
+                    }
+                }
+
                 if (answered && !isCorrect) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -772,6 +911,7 @@ private fun VocabQuizScreen(
 private fun TargetCard(
     question: VocabQuestion,
     example: VocabExamples.Example?,
+    showExample: Boolean,
     onSpeakWord: () -> Unit,
     onSpeakExample: () -> Unit
 ) {
@@ -810,7 +950,7 @@ private fun TargetCard(
                 }
             }
 
-            example?.let { ex ->
+            if (showExample) example?.let { ex ->
                 Spacer(Modifier.height(12.dp))
                 Surface(
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),

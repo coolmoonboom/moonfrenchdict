@@ -84,12 +84,12 @@ class VocabQuizTest {
     @Test
     fun `parse vocab json`() {
         val json = """
-            {"version":2,"levels":[["A1","A1"],["S8","专八"]],
-            "words":[["chat","n.m.","A1","猫",0],["manger","v.","A1","吃",1],["rare","adj.","S8","稀有的",0]]}
+            {"version":2,"levels":[["A1","A1"],["TFS8","专八 TFS8"]],
+            "words":[["chat","n.m.","A1","猫",0],["manger","v.","A1","吃",1],["rare","adj.","TFS8","稀有的",0]]}
         """.trimIndent()
         val book = VocabBook.parse(json)
         assertEquals(2, book.levels.size)
-        assertEquals("专八", book.levels[1].label)
+        assertEquals("专八 TFS8", book.levels[1].label)
         assertEquals(3, book.entries.size)
         assertEquals("chat", book.entries[0].word)
         assertEquals("A1", book.entries[0].level)
@@ -97,7 +97,7 @@ class VocabQuizTest {
         assertTrue(book.entries[1].isVerb)
         assertEquals(listOf("chat", "rare"), book.pool(false, VocabData.ALL).map { it.word })
         assertEquals(listOf("manger"), book.pool(true, "A1").map { it.word })
-        assertEquals(1, book.pool(false, "S8").size)
+        assertEquals(1, book.pool(false, "TFS8").size)
         assertEquals("全部词汇", book.labelOf(VocabData.ALL))
     }
 }
