@@ -17,3 +17,10 @@ This file records user instructions, preferences, and teachings for reference in
   - 工作流里 `gh release create` 需在 yml 顶层声明 `permissions: contents: write`（该仓库 GITHUB_TOKEN 默认只读，否则 403 Resource not accessible by integration）；tag 触发的构建读取 tag 上的工作流文件，改工作流后要重指 tag 才生效
   - **Android APK 发布约定**：Release 编号 v1.0.x 每发一次 +1，与 `app/build.gradle.kts` 的 versionName 脱钩（versionName 保持 1.0.26 未动）；产物名固定 `french_dict_vX.Y.Z.apk`。手动发布：先把 `app/build/outputs/apk/release/app-release.apk` 复制成该名，再 `gh release create vX.Y.Z --target main --title <中文标题> --notes <中文说明> /tmp/opencode/french_dict_vX.Y.Z.apk`（新 release 会顶成 Latest）
   - `gh release upload` 的 `path#name` 重命名语法不可靠（曾把资产传成 app-release.apk）；删资产要用数字 id（`gh api -X DELETE .../releases/<release_id>/assets/<asset_id>`），172MB 资产上传/创建 release 用后台终端执行避免超时
+
+[本机构建内存配额]
+- Date: 2026-09-24
+- Context: Discovered by Agent while running :app:testDebugUnitTest + :app:assembleRelease in one background terminal
+- Category: Build & Compilation
+- Instructions:
+  - 主机总内存 ~8GB。同一后台终端连跑单测+R8 打包时 memory_percent 必须给 70（55 会在 minifyReleaseWithR8 阶段被 cgroup OOM 杀掉，日志只报 "Gradle build daemon disappeared"）；仅 compileDebugKotlin 用 55 即可
