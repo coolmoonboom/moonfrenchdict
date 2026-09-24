@@ -124,11 +124,20 @@ class VocabSrs(context: Context, bookKey: String) {
         return nextState.first
     }
 
-    /** 忽略当前词：标记为已学习并立刻进入待复习（当天到期），不改动原学习日。 */
-    fun ignore(word: String) {
+    /** 手动标记为已掌握：记满档并排到极远期，不再进入待复习。 */
+    fun master(word: String) {
         val t = today
         val learn = state(word)?.third ?: t
-        write(word, 0, t, learn)
+        write(word, MASTERED_STAGE, Long.MAX_VALUE, learn)
+    }
+
+    /** 已掌握的词（阶段≥MASTERED_STAGE，按池内原顺序）。 */
+    fun masteredWords(pool: List<VocabEntry>): List<VocabEntry> {
+        val all = prefs.all
+        return pool.filter { e ->
+            val s = parse(all[KEY + e.word] as? String) ?: return@filter false
+            s.first >= MASTERED_STAGE
+        }
     }
 
     /** 每日新词计划（0=未设置） */

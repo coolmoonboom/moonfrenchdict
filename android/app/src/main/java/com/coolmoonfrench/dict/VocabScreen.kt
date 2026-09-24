@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
@@ -31,7 +32,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.random.Random
 
@@ -95,6 +95,7 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
                 onOpenWords = { words, t -> route = VocabRoute.WordList(words, t) },
                 onStart = { route = VocabRoute.Quiz(null, if (isVerbs) "背动词" else "背单词") },
                 onReview = { route = VocabRoute.ReviewDays },
+                onMastered = { words -> route = VocabRoute.WordList(words, "已掌握") },
                 onBack = onExit
             )
         }
@@ -104,6 +105,7 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
                 pool = pool,
                 srs = srs,
                 refreshKey = refresh,
+                onOpenDay = { words, label -> route = VocabRoute.WordList(words, label) },
                 onStart = { words, label -> route = VocabRoute.Quiz(words, label) },
                 onBack = { route = VocabRoute.Home }
             )
@@ -164,12 +166,19 @@ private fun VocabHomeView(
     onOpenWords: (List<VocabEntry>, String) -> Unit,
     onStart: () -> Unit,
     onReview: () -> Unit,
+    onMastered: (List<VocabEntry>) -> Unit,
     onBack: () -> Unit
 ) {
     val stats = remember(pool, refreshKey) { srs.stats(pool) }
     var plan by remember(levelId) { mutableIntStateOf(srs.dailyPlan()) }
     val newTodo = if (plan > 0) minOf(stats.notStarted, plan) else 0
     val dueTodo = stats.due
+    // 全部单词都学过一遍 → 书名加「（第二轮）」
+    val bookTitle = if (stats.notStarted == 0 && stats.learned > 0) {
+        book.labelOf(levelId) + "（第二轮）"
+    } else {
+        book.labelOf(levelId)
+    }
 
     var showBooks by remember { mutableStateOf(false) }
     var showPlan by remember { mutableStateOf(false) }
@@ -213,7 +222,7 @@ private fun VocabHomeView(
                             Text("当前单词书", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                book.labelOf(levelId),
+                                bookTitle,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -250,6 +259,13 @@ private fun VocabHomeView(
                     label = "待复习",
                     accent = Color(0xFFE6A700),
                     onClick = onReview
+                )
+                BigCountCard(
+                    modifier = Modifier.weight(1f),
+                    count = stats.mastered,
+                    label = "已掌握",
+                    accent = Color(0xFF2E7D32),
+                    onClick = { onMastered(srs.masteredWords(pool)) }
                 )
             }
 
@@ -418,6 +434,7 @@ private fun VocabReviewDaysScreen(
     pool: List<VocabEntry>,
     srs: VocabSrs,
     refreshKey: Int,
+    onOpenDay: (List<VocabEntry>, String) -> Unit,
     onStart: (List<VocabEntry>, String) -> Unit,
     onBack: () -> Unit
 ) {
@@ -470,21 +487,29 @@ private fun VocabReviewDaysScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            selected = if (checked) selected - g.day else selected + g.day
-                        }
                         .padding(horizontal = 8.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Checkbox(checked = checked, onCheckedChange = {
                         selected = if (checked) selected - g.day else selected + g.day
                     })
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onOpenDay(g.words, dayLabel(g.day)) }
+                    ) {
                         Text(dayLabel(g.day), fontSize = 16.sp, fontWeight = FontWeight.Medium)
                         Text(
                             "${g.words.size} 词" + if (g.due > 0) " · 到期 ${g.due}" else " · 未到期",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = { onOpenDay(g.words, dayLabel(g.day)) }) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "查看当天单词",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -666,16 +691,15 @@ private fun VocabQuizScreen(
         }
     }
 
-    /** 忽略当前词：进入待复习并跳到下一题 */
-    fun ignore() {
+    /** 已掌握当前词：标记为已掌握并跳到下一题 */
+    fun master() {
         if (selected != null || current == null) return
-        srs.ignore(current.target.word)
+        srs.master(current.target.word)
         advance()
     }
 
     LaunchedEffect(selected) {
         if (selected != null && current != null && selected == current.answerIndex) {
-            delay(900)
             advance()
         }
     }
@@ -850,10 +874,10 @@ private fun VocabQuizScreen(
 
                 if (!answered) {
                     OutlinedButton(
-                        onClick = { ignore() },
+                        onClick = { master() },
                         modifier = Modifier.fillMaxWidth().height(46.dp)
                     ) {
-                        Text("忽略", fontSize = 15.sp)
+                        Text("已掌握", fontSize = 15.sp)
                     }
                 }
 
