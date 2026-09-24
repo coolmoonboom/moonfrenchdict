@@ -32,17 +32,20 @@ private fun buildQuiz(bank: List<QuizQuestion>): List<QuizQuestion> {
 
 @Composable
 fun QuizScreen(category: QuizCategory, onBack: () -> Unit) {
-    val bank = remember(category) { getQuestions(category) }
+    QuizScreen(category.title, remember { getQuestions(category) }, onBack)
+}
 
-    var questions by remember { mutableStateOf(buildQuiz(bank)) }
-    var currentIndex by remember { mutableIntStateOf(0) }
-    var score by remember { mutableIntStateOf(0) }
-    var selected by remember { mutableStateOf<String?>(null) }
-    var finished by remember { mutableStateOf(false) }
+@Composable
+fun QuizScreen(title: String, bank: List<QuizQuestion>, onBack: () -> Unit) {
+    var questions by remember(bank) { mutableStateOf(buildQuiz(bank)) }
+    var currentIndex by remember(bank) { mutableIntStateOf(0) }
+    var score by remember(bank) { mutableIntStateOf(0) }
+    var selected by remember(bank) { mutableStateOf<String?>(null) }
+    var finished by remember(bank) { mutableStateOf(false) }
 
     if (finished) {
         QuizResultScreen(
-            category = category,
+            title = title,
             score = score,
             total = questions.size,
             onRestart = {
@@ -91,7 +94,7 @@ fun QuizScreen(category: QuizCategory, onBack: () -> Unit) {
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
             }
-            Text(category.title, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             Text(
                 "得分 $score",
                 fontSize = 13.sp,
@@ -257,7 +260,7 @@ fun QuizScreen(category: QuizCategory, onBack: () -> Unit) {
 
 @Composable
 private fun QuizResultScreen(
-    category: QuizCategory,
+    title: String,
     score: Int,
     total: Int,
     onRestart: () -> Unit,
@@ -278,7 +281,7 @@ private fun QuizResultScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(category.title, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(title, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))
         Text(
             title,
