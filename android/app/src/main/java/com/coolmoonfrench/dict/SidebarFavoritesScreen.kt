@@ -154,9 +154,10 @@ private fun WordFavoritesTab(repository: DictRepository) {
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
 
-    // 预热 Mimic 法语 TTS（幂等，非阻塞）
+    // 预热 Mimic 法语 TTS（幂等，非阻塞），同时刷新收藏（词书新增收藏后重进可见）
     LaunchedEffect(Unit) {
         Speech.ensureInitialized(context)
+        wordFavs = repository.loadFavorites()
     }
 
     if (wordFavs.isEmpty()) {

@@ -169,6 +169,8 @@ class VocabSrs(context: Context, bookKey: String) {
         private const val DEFAULT_PLAN = 20
         const val MASTERED_STAGE = 6
         private const val MAX_STAGE = 7
+        /** 同步包中表示每日计划的特殊键（其余键均为 "w_" 前缀进度条目） */
+        const val SYNC_DAILY_KEY = "d"
         /** 艾宾浩斯复习间隔（天），下标为阶段：阶段 0 当天复习，其后 1/2/4/7/15/30/60 天。 */
         private val INTERVALS = intArrayOf(0, 1, 2, 4, 7, 15, 30, 60)
 
@@ -233,5 +235,81 @@ class VocabSrs(context: Context, bookKey: String) {
 
         private fun sanitize(s: String): String =
             s.map { if (it.isLetterOrDigit() || it in ".-_") it else '_' }.joinToString("")
+
+        /** prefs 文件名 */
+        fun prefsName(bookKey: String): String = "vocab_srs_" + sanitize(bookKey)
+
+        /**
+         * 合并两本书记忆进度（纯函数，可单测）：逐词保留更优的一条
+         * （见 [betterState]）；每日计划等其余键 local 优先。
+         */
+        fun mergeProgress(
+            local: Map<String, String>,
+            cloud: Map<String, String>
+        ): Map<String, String> {
+            val out = HashMap(local)
+            for ((k, v) in cloud) {
+                val mine = out[k] ?: run { out[k] = v; continue }
+                if (k.startsWith(KEY)) out[k] = betterState(mine, v)
+            }
+            return out
+        }
+
+        /** 两条进度记录取更优：阶段大者优先，其次学习日新，其次到期日晚；并列取 [a] */
+        fun betterState(a: String, b: String): String {
+            val x = parse(a) ?: return b
+            val y = parse(b) ?: return a
+            return when {
+                x.first != y.first -> if (x.first > y.first) a else b
+                x.third != y.third -> if (x.third > y.third) a else b
+                x.second != y.second -> if (x.second > y.second) a else b
+                else -> a
+            }
+        }
+    }
+}
+
+/** 背词进度的收集/回写（跨全部单词书），供云同步使用。 */
+object VocabSync {
+
+    /** 收集全部单词书进度：bookKey -> { "w_词" -> "阶段:到期:学习日", "d" -> 每日计划 } */
+    fun collect(context: Context): Map<String, Map<String, String>> {
+        val book = runCatching { VocabData.load(context) }.getOrNull() ?: return emptyMap()
+        val out = LinkedHashMap<String, Map<String, String>>()
+        for (verbMode in listOf(false, true)) {
+            for (levelId in listOf(VocabData.ALL) + book.levels.map { it.id }) {
+                val key = VocabSrs.bookKey(verbMode, levelId)
+                val p = context.getSharedPreferences(
+                    VocabSrs.prefsName(key), Context.MODE_PRIVATE
+                )
+                val m = LinkedHashMap<String, String>()
+                p.all.forEach { (k, v) ->
+                    if (k.startsWith("w_") && v is String) m[k] = v
+                }
+                val plan = p.getInt("daily_plan", 0)
+                if (plan > 0) m[VocabSrs.SYNC_DAILY_KEY] = plan.toString()
+                if (m.isNotEmpty()) out[key] = m
+            }
+        }
+        return out
+    }
+
+    /** 回写进度：逐书逐词合并（进度取更优），计划仅在本地未设置时采用云端，避免被旧值覆盖。 */
+    fun apply(context: Context, remote: Map<String, Map<String, String>>) {
+        for ((key, entries) in remote) {
+            val p = context.getSharedPreferences(
+                VocabSrs.prefsName(key), Context.MODE_PRIVATE
+            )
+            val local = LinkedHashMap<String, String>()
+            p.all.forEach { (k, v) -> if (k.startsWith("w_") && v is String) local[k] = v }
+            val merged = VocabSrs.mergeProgress(local, entries - VocabSrs.SYNC_DAILY_KEY)
+            val editor = p.edit()
+            merged.forEach { (k, v) -> editor.putString(k, v) }
+            val cloudPlan = entries[VocabSrs.SYNC_DAILY_KEY]?.toIntOrNull() ?: 0
+            if (cloudPlan > 0 && p.getInt("daily_plan", 0) <= 0) {
+                editor.putInt("daily_plan", cloudPlan)
+            }
+            editor.apply()
+        }
     }
 }

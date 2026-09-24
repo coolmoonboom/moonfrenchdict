@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Today
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Notes
 import coil3.ImageLoader
@@ -136,6 +137,7 @@ fun MainTabs(
     var showQuestionTypes by remember { mutableStateOf(false) }
     var showVideoImport by remember { mutableStateOf(false) }
     var showVoiceChat by remember { mutableStateOf(false) }
+    var showCalNum by remember { mutableStateOf(false) }
     var showPhonetics by remember { mutableStateOf(false) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -250,13 +252,22 @@ fun MainTabs(
                         }
                     )
                     DrawerItem(
-                        icon = Icons.Filled.Mic,
-                        label = "口语对话",
+                        icon = Icons.Filled.Today,
+                        label = "日历和数字",
                         onClick = {
                             scope.launch { drawerState.close() }
-                            showVoiceChat = true
+                            showCalNum = true
                         }
                     )
+                    // 口语对话入口暂时隐藏（功能代码保留，恢复时取消注释即可）
+                    // DrawerItem(
+                    //     icon = Icons.Filled.Mic,
+                    //     label = "口语对话",
+                    //     onClick = {
+                    //         scope.launch { drawerState.close() }
+                    //         showVoiceChat = true
+                    //     }
+                    // )
                 }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
@@ -407,6 +418,16 @@ fun MainTabs(
             color = MaterialTheme.colorScheme.background
         ) {
             GrammarPracticeScreen(onBack = { showGrammar = false })
+        }
+    }
+
+    // 日历和数字（星期 / 月份 / 相对日期 / 数字系统 / 数学符号读法）
+    if (showCalNum) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            CalendarNumbersScreen(onBack = { showCalNum = false })
         }
     }
 

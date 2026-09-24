@@ -142,7 +142,8 @@ data class SyncData(
     val favorites: Set<String>,           // 收藏单词
     val sentences: List<SavedSentence>,   // 收藏句子
     val aiFavorites: List<AIFavorite>,    // 收藏 AI 回答
-    val videoTexts: List<VideoTextFavorite> // 收藏的视频转文字
+    val videoTexts: List<VideoTextFavorite>, // 收藏的视频转文字
+    val vocabProgress: Map<String, Map<String, String>> = emptyMap() // 背词进度 bookKey->条目
 ) {
     companion object {
         val EMPTY = SyncData(emptyList(), emptySet(), emptyList(), emptyList(), emptyList())
@@ -159,6 +160,7 @@ object SyncBundle {
     const val SENTENCES = "sentences.json"
     const val AI_FAVORITES = "ai_favorites.json"
     const val VIDEO_TEXTS = "video_texts.json"
+    const val VOCAB_PROGRESS = "vocab_progress.json"
 
     data class Manifest(
         val format: Int,
@@ -202,6 +204,16 @@ object SyncBundle {
             val vt = JSONArray()
             data.videoTexts.forEach { vt.put(it.toJson()) }
             add(VIDEO_TEXTS, vt.toString())
+
+            if (data.vocabProgress.isNotEmpty()) {
+                val vp = JSONObject()
+                data.vocabProgress.forEach { (book, entries) ->
+                    val obj = JSONObject()
+                    entries.forEach { (k, v) -> obj.put(k, v) }
+                    vp.put(book, obj)
+                }
+                add(VOCAB_PROGRESS, vp.toString())
+            }
         }
         return bos.toByteArray()
     }
@@ -256,7 +268,20 @@ object SyncBundle {
             (0 until arr.length()).map { VideoTextFavorite.fromJson(arr.getJSONObject(it)) }
         } catch (e: Exception) { emptyList() }
 
-        return manifest to SyncData(history, favorites, sentences, aiFavs, videoTexts)
+        // 旧版本同步包没有该文件 -> 空进度，天然向后兼容
+        val vocabProgress = try {
+            val obj = files[VOCAB_PROGRESS]?.let { JSONObject(it) } ?: JSONObject()
+            val map = LinkedHashMap<String, Map<String, String>>()
+            obj.keys().forEach { book ->
+                val bookObj = obj.optJSONObject(book) ?: return@forEach
+                val entries = LinkedHashMap<String, String>()
+                bookObj.keys().forEach { k -> entries[k] = bookObj.optString(k) }
+                if (entries.isNotEmpty()) map[book] = entries
+            }
+            map
+        } catch (e: Exception) { emptyMap() }
+
+        return manifest to SyncData(history, favorites, sentences, aiFavs, videoTexts, vocabProgress)
     }
 }
 
@@ -296,7 +321,8 @@ class SyncManager(
         favorites = repository.favoriteWords(),
         sentences = aiPrefs.loadSentenceFavorites(),
         aiFavorites = aiPrefs.loadAIFavorites(),
-        videoTexts = aiPrefs.loadVideoTextFavorites()
+        videoTexts = aiPrefs.loadVideoTextFavorites(),
+        vocabProgress = VocabSync.collect(ctx)
     )
 
     fun applyLocal(data: SyncData) {
@@ -305,6 +331,7 @@ class SyncManager(
         aiPrefs.replaceSentenceFavorites(data.sentences)
         aiPrefs.replaceAIFavorites(data.aiFavorites)
         aiPrefs.replaceVideoTextFavorites(data.videoTexts)
+        VocabSync.apply(ctx, data.vocabProgress)
     }
 
     // ---------- 快照（回滚用） ----------
@@ -399,7 +426,16 @@ class SyncManager(
             if (mergedVideoTexts.none { it.text == v.text }) mergedVideoTexts.add(v)
         }
 
-        val merged = SyncData(mergedHistory, mergedFavs, mergedSentences, mergedAi, mergedVideoTexts)
+        // 背词进度：逐书逐词取更优的一条
+        val mergedVocab = LinkedHashMap<String, Map<String, String>>()
+        (local.vocabProgress.keys + cloud.vocabProgress.keys).forEach { book ->
+            mergedVocab[book] = VocabSrs.mergeProgress(
+                local.vocabProgress[book].orEmpty(),
+                cloud.vocabProgress[book].orEmpty()
+            )
+        }
+
+        val merged = SyncData(mergedHistory, mergedFavs, mergedSentences, mergedAi, mergedVideoTexts, mergedVocab)
         return try {
             takeSnapshot()
             applyLocal(merged)

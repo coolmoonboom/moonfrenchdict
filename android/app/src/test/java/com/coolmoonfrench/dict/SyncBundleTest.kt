@@ -71,4 +71,51 @@ class SyncBundleTest {
         assertEquals(legacy.favorites, restored.favorites)
         assertEquals(emptyList<VideoTextFavorite>(), restored.videoTexts)
     }
+
+    @Test
+    fun packUnpack_roundTripsVocabProgress() {
+        val data = SyncData(
+            history = emptyList(),
+            favorites = emptySet(),
+            sentences = emptyList(),
+            aiFavorites = emptyList(),
+            videoTexts = emptyList(),
+            vocabProgress = mapOf(
+                "w.A1" to mapOf("w_chat" to "3:20500:20480", VocabSrs.SYNC_DAILY_KEY to "30"),
+                "v.all" to mapOf("w_manger" to "0:20490:20489")
+            )
+        )
+        val (_, restored) = SyncBundle.unpack(SyncBundle.pack(data, "1.0.38", "dev-test"))
+        assertEquals(data.vocabProgress, restored.vocabProgress)
+    }
+
+    @Test
+    fun unpack_bundleWithoutVocabProgress_yieldsEmpty() {
+        val legacy = SyncData(
+            history = listOf("bonjour"),
+            favorites = setOf("chat"),
+            sentences = emptyList(),
+            aiFavorites = emptyList(),
+            videoTexts = emptyList()
+        )
+        val (_, restored) = SyncBundle.unpack(SyncBundle.pack(legacy, "1.0.36", "old"))
+        assertEquals(emptyMap<String, Map<String, String>>(), restored.vocabProgress)
+    }
+
+    @Test
+    fun mergeProgress_keepsBetterRecordPerWord() {
+        val local = mapOf(
+            "w_a" to "2:20500:20480",   // 更高阶段应保留
+            "w_b" to "3:20400:20470"    // 阶段并列时学习日新的云端记录胜出
+        )
+        val cloud = mapOf(
+            "w_a" to "1:20600:20490",
+            "w_b" to "3:20500:20485",
+            "w_c" to "0:20490:20489"
+        )
+        val merged = VocabSrs.mergeProgress(local, cloud)
+        assertEquals("2:20500:20480", merged["w_a"])
+        assertEquals("3:20500:20485", merged["w_b"])
+        assertEquals("0:20490:20489", merged["w_c"])
+    }
 }

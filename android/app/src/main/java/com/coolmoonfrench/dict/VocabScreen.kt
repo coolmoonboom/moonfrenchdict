@@ -35,6 +35,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.random.Random
 
 /** 出题方向 */
@@ -50,7 +52,37 @@ private sealed class VocabRoute {
     class WordList(val words: List<VocabEntry>, val title: String) : VocabRoute()
     class Detail(val words: List<VocabEntry>, val index: Int, val listTitle: String) : VocabRoute()
     object ReviewDays : VocabRoute()
-    class Quiz(val fixed: List<VocabEntry>?, val title: String) : VocabRoute()
+    class Quiz(val fixed: List<VocabEntry>?, val title: String, val startIndex: Int = 0) : VocabRoute()
+}
+
+/**
+ * 中途退出后的「继续上次学习」存档：每本单词书一条，记录队列词序与已答到的位置。
+ * 答题进度（SRS 排期）在退出前已逐题落库，续学时从存档位置继续即可。
+ */
+private object VocabResumeStore {
+    data class Resume(val words: List<String>, val index: Int)
+
+    private fun prefs(context: android.content.Context) =
+        context.applicationContext.getSharedPreferences("vocab_resume", 0)
+
+    fun save(context: android.content.Context, key: String, words: List<String>, index: Int) {
+        val obj = JSONObject()
+            .put("words", JSONArray(words))
+            .put("i", index)
+        prefs(context).edit().putString(key, obj.toString()).apply()
+    }
+
+    fun clear(context: android.content.Context, key: String) =
+        prefs(context).edit().remove(key).apply()
+
+    fun load(context: android.content.Context, key: String): Resume? = runCatching {
+        val raw = prefs(context).getString(key, null) ?: return null
+        val obj = JSONObject(raw)
+        val arr = obj.getJSONArray("words")
+        val words = (0 until arr.length()).map { arr.getString(it) }
+        Resume(words, obj.optInt("i", 0))
+    }.getOrNull()
+        ?.takeIf { it.words.isNotEmpty() && it.index in it.words.indices }
 }
 
 @Composable
@@ -96,6 +128,13 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
                 },
                 onOpenWords = { words, t -> route = VocabRoute.WordList(words, t) },
                 onStart = { route = VocabRoute.Quiz(null, if (isVerbs) "背动词" else "背单词") },
+                onContinue = { entries, i ->
+                    route = VocabRoute.Quiz(entries, if (isVerbs) "背动词" else "背单词", i)
+                },
+                onForgetResume = {
+                    VocabResumeStore.clear(context, VocabSrs.bookKey(isVerbs, levelId))
+                    refresh++
+                },
                 onReview = { route = VocabRoute.ReviewDays },
                 onMastered = { words -> route = VocabRoute.WordList(words, "已掌握") },
                 onBack = onExit
@@ -140,6 +179,8 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
                 direction = direction,
                 newLimit = srs.dailyPlan(),
                 fixed = r.fixed,
+                startIndex = r.startIndex,
+                resumeKey = VocabSrs.bookKey(isVerbs, levelId),
                 onFinish = {
                     refresh++
                     route = VocabRoute.Home
@@ -167,12 +208,24 @@ private fun VocabHomeView(
     onDirectionChange: (VocabDir) -> Unit,
     onOpenWords: (List<VocabEntry>, String) -> Unit,
     onStart: () -> Unit,
+    onContinue: (List<VocabEntry>, Int) -> Unit,
+    onForgetResume: () -> Unit,
     onReview: () -> Unit,
     onMastered: (List<VocabEntry>) -> Unit,
     onBack: () -> Unit
 ) {
     val stats = remember(pool, refreshKey) { srs.stats(pool) }
     var plan by remember(levelId) { mutableIntStateOf(srs.dailyPlan()) }
+
+    // 存在未完成的旧会话（词仍全部在本书中才有效）
+    val resume = remember(refreshKey, levelId) {
+        VocabResumeStore.load(context, VocabSrs.bookKey(verbMode, levelId))
+            ?.let { r ->
+                val byWord = book.base(verbMode).associateBy { it.word }
+                val entries = r.words.mapNotNull { byWord[it] }
+                if (entries.size == r.words.size) r to entries else null
+            }
+    }
     // 第一轮：按计划展示未学新词数；第二轮（无未学词）：按计划展示重学批次
     val newTodo = if (plan > 0) {
         if (stats.notStarted > 0) minOf(stats.notStarted, plan) else minOf(stats.learning + stats.mastered, plan)
@@ -311,6 +364,30 @@ private fun VocabHomeView(
                 }
             }
 
+            resume?.let { (saved, entries) ->
+                OutlinedCard(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    onClick = { onContinue(entries, saved.index) }
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("继续上次学习", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                "已答 ${saved.index} / ${entries.size} 题，从第 ${saved.index + 1} 题继续",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = onForgetResume) {
+                            Text("放弃", fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+
             Button(
                 onClick = {
                     val q = srs.buildSession(pool, plan)
@@ -422,6 +499,7 @@ private fun VocabHomeView(
             confirmButton = {
                 TextButton(onClick = {
                     srs.reset()
+                    onForgetResume()
                     confirmReset = false
                 }) { Text("确定") }
             },
@@ -634,13 +712,18 @@ private fun VocabQuizScreen(
     direction: VocabDir,
     newLimit: Int,
     fixed: List<VocabEntry>?,
+    resumeKey: String,
+    startIndex: Int = 0,
     onFinish: () -> Unit
 ) {
     val context = LocalContext.current
-    val initialQueue = remember(fixed) { fixed ?: srs.buildSession(pool, newLimit) }
+    // 队列随机洗牌：每次开始/再来一轮的题目顺序都不同
+    val initialQueue = remember(fixed) { (fixed ?: srs.buildSession(pool, newLimit)).shuffled() }
 
     var queue by remember { mutableStateOf(initialQueue) }
-    var index by remember { mutableIntStateOf(0) }
+    var index by remember {
+        mutableIntStateOf(startIndex.coerceAtLeast(0).coerceAtMost(initialQueue.size - 1))
+    }
     var correctCount by remember { mutableIntStateOf(0) }
     var question by remember { mutableStateOf<VocabQuestion?>(null) }
     var selected by remember { mutableStateOf<Int?>(null) }
@@ -690,6 +773,14 @@ private fun VocabQuizScreen(
         if (ni < queue.size) index = ni else finished = true
     }
 
+    // 续学存档：队列/位置变化即持久化；背完自动清除
+    LaunchedEffect(queue, index) {
+        VocabResumeStore.save(context, resumeKey, queue.map { it.word }, index)
+    }
+    LaunchedEffect(finished) {
+        if (finished) VocabResumeStore.clear(context, resumeKey)
+    }
+
     fun answer(i: Int) {
         if (selected != null || current == null) return
         selected = i
@@ -726,7 +817,7 @@ private fun VocabQuizScreen(
             learned = stats.learned,
             mastered = stats.mastered,
             onRestart = {
-                val q = fixed ?: srs.buildSession(pool, newLimit)
+                val q = (fixed ?: srs.buildSession(pool, newLimit)).shuffled()
                 if (q.isEmpty()) {
                     Toast.makeText(context, "今日待学词已全部完成，明天再来吧", Toast.LENGTH_SHORT).show()
                     return@VocabResultView
@@ -822,8 +913,12 @@ private fun VocabQuizScreen(
                     }
 
                     val letter = ('a' + oi).toString()
-                    val showZh = current.frenchToFront.not() && (answered || (oi == longPressed))
-                    val expandedZh = if (showZh) option.entry.meaning else ""
+                    // 中→法：显示选项词义；法→中：长按选项显示对应的法语词
+                    val expandedZh = when {
+                        !current.frenchToFront && (answered || oi == longPressed) -> option.entry.meaning
+                        current.frenchToFront && oi == longPressed -> option.entry.word
+                        else -> ""
+                    }
 
                     Row(
                         modifier = Modifier

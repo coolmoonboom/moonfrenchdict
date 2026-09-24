@@ -409,11 +409,24 @@ class DictRepository(private val context: Context) {
         context.getSharedPreferences("favorites", Context.MODE_PRIVATE)
     }
 
-    fun loadFavorites(): List<DictEntry> {
-        val set = prefs.getStringSet("words", emptySet()) ?: emptySet()
-        return set.mapNotNull { word ->
-            lookupExact(word).firstOrNull()
-        }
+    /** 词书词条索引（懒加载）：词典收录不全时收藏列表用词书兜底 */
+    private val vocabIndex: Map<String, VocabEntry> by lazy {
+        runCatching {
+            VocabData.load(context).entries.associateBy { it.word.lowercase() }
+        }.getOrElse { emptyMap() }
+    }
+
+    fun loadFavorites(): List<DictEntry> = favoriteWords().mapNotNull { word ->
+        lookupExact(word).firstOrNull()
+            ?: vocabIndex[word.lowercase()]?.let { v ->
+                DictEntry(
+                    word = v.word,
+                    pos = v.pos,
+                    zh = v.meaning,
+                    en = "",
+                    meaning = v.meaning
+                )
+            }
     }
 
     fun addFavorite(word: String) {
