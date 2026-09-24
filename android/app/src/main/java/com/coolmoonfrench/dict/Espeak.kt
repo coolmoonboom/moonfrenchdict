@@ -355,6 +355,64 @@ object Espeak {
         return true
     }
 
+    /**
+     * 合成并播放，挂起直到播放完成或被取消（供「列表循环」等需要「播完再继续」的场景）。
+     * 与 [speak] 共用 [synthesizePcm]/[playPcm]：引擎未就绪时同样等待；
+     * 参数非法/合成失败返回 false；被取消则抛 [CancellationException]。
+     */
+    suspend fun speakAwait(
+        text: String,
+        deterministic: Boolean = false,
+        onError: ((String) -> Unit)? = null
+    ): Boolean {
+        if (text.isBlank()) return true
+        if (state == State.FAILED) {
+            onError?.invoke(lastError ?: "语音引擎初始化失败")
+            return false
+        }
+        stop()
+        return withContext(Dispatchers.IO) {
+            try {
+                if (!ensureEngineReadyAwait(onError)) return@withContext false
+                val speed = speechRate.coerceIn(0.25f, 1.5f)
+                val bytes = synthesizePcm(text, speed, deterministic)
+                if (bytes == null || bytes.isEmpty()) {
+                    onError?.invoke(lastError ?: "语音合成失败(无 PCM)")
+                    return@withContext false
+                }
+                currentCoroutineContext().ensureActive()
+                playPcm(bytes, onError)
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                val msg = "播放失败: ${e.message}"
+                lastError = msg
+                onError?.invoke(msg)
+                Log.e(TAG, "speakAwait failed", e)
+                false
+            }
+        }
+    }
+
+    /** 等待引擎就绪；失败时回调原因并返回 false（不抛异常，便于调用方优雅结束循环）。 */
+    private suspend fun ensureEngineReadyAwait(onError: ((String) -> Unit)?): Boolean {
+        if (state == State.READY) return true
+        val deadline = System.currentTimeMillis() + 10_000L
+        while (state == State.INITIALIZING && System.currentTimeMillis() < deadline) {
+            delay(50)
+        }
+        if (state == State.READY) return true
+        val msg = when (state) {
+            State.FAILED -> lastError ?: "语音引擎初始化失败"
+            State.INITIALIZING -> "语音引擎初始化超时"
+            else -> "语音引擎未就绪"
+        }
+        lastError = msg
+        onError?.invoke(msg)
+        return false
+    }
+
     private suspend fun ensureEngineReady(onError: ((String) -> Unit)?) {
         if (state == State.READY) return
         val deadline = System.currentTimeMillis() + 10_000L

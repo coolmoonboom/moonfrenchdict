@@ -9,10 +9,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,7 +24,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -45,6 +50,8 @@ fun VocabDetailScreen(
     var meanings by remember { mutableStateOf<List<String>>(emptyList()) }
     var example by remember { mutableStateOf<VocabExamples.Example?>(null) }
     var fav by remember { mutableStateOf(false) }
+    var loopActive by remember { mutableStateOf(false) }
+    var loopJob by remember { mutableStateOf<Job?>(null) }
 
     BackHandler { onBack() }
 
@@ -68,6 +75,38 @@ fun VocabDetailScreen(
             val ex = example ?: return@launch
             Speech.ensureInitialized(context)
             Speech.speakWithFeedback(context, ex.fr)
+        }
+    }
+
+    /** 停止列表循环：取消循环协程并停掉正在播放的语音。 */
+    fun stopLoop() {
+        loopActive = false
+        loopJob?.cancel()
+        loopJob = null
+        Speech.stop()
+    }
+
+    /** 列表循环：从当前词起，依次播报「单词 + 例句」，播完自动切下一词，到末尾回到首词。 */
+    fun toggleLoop() {
+        if (loopActive) {
+            stopLoop()
+            return
+        }
+        loopActive = true
+        loopJob = scope.launch {
+            var i = index
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val w = words.getOrNull(i) ?: break
+                Espeak.speakAwait(w.word, deterministic = true)
+                currentCoroutineContext().ensureActive()
+                val ex = withContext(Dispatchers.IO) { VocabExamples.lookup(context, w.word) }
+                if (ex != null) Espeak.speakAwait(ex.fr)
+                currentCoroutineContext().ensureActive()
+                i = (i + 1) % words.size
+                onNavigate(i)
+            }
+            loopActive = false
         }
     }
 
@@ -184,28 +223,38 @@ fun VocabDetailScreen(
             Spacer(Modifier.height(16.dp))
         }
 
-        // 底部：上一曲 / 播放 / 下一曲
+        // 底部：列表循环 / 上一曲 / 播放 / 下一曲
         Surface(tonalElevation = 3.dp) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                IconButton(onClick = { toggleLoop() }) {
+                    Icon(
+                        if (loopActive) Icons.Filled.Stop else Icons.Filled.Repeat,
+                        contentDescription = if (loopActive) "停止列表循环" else "列表循环",
+                        modifier = Modifier.size(32.dp),
+                        tint = if (loopActive) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 IconButton(
                     onClick = { if (index > 0) onNavigate(index - 1) },
-                    enabled = index > 0
+                    enabled = !loopActive && index > 0
                 ) {
                     Icon(Icons.Filled.SkipPrevious, contentDescription = "上一个", modifier = Modifier.size(32.dp))
                 }
                 FilledIconButton(
                     onClick = { playAll() },
+                    enabled = !loopActive,
                     modifier = Modifier.size(56.dp)
                 ) {
                     Icon(Icons.Filled.PlayArrow, contentDescription = "播放", modifier = Modifier.size(32.dp))
                 }
                 IconButton(
                     onClick = { if (index < words.size - 1) onNavigate(index + 1) },
-                    enabled = index < words.size - 1
+                    enabled = !loopActive && index < words.size - 1
                 ) {
                     Icon(Icons.Filled.SkipNext, contentDescription = "下一个", modifier = Modifier.size(32.dp))
                 }

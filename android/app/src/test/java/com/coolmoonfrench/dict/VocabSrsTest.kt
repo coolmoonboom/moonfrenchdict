@@ -88,4 +88,56 @@ class VocabSrsTest {
 
         assertEquals("w.TFS8", VocabSrs.bookKey(false, "TFS8"))
     }
+
+    // ---------------- 第二轮：按每日计划供词 ----------------
+
+    private fun e(word: String) = VocabEntry(word, "n.m.", "A1", "意思 $word", false)
+
+    @Test
+    fun `orderNewWords keeps only unstarted while book in progress`() {
+        val pool = listOf(e("a"), e("b"), e("c"))
+        val started = setOf("a")
+        val out = VocabSrs.orderNewWords(pool) { it in started }
+        assertEquals(listOf("b", "c"), out.map { it.word })
+    }
+
+    @Test
+    fun `orderNewWords falls back to whole pool in second round`() {
+        val pool = listOf(e("a"), e("b"))
+        val started = setOf("a", "b")
+        val out = VocabSrs.orderNewWords(pool) { it in started }
+        assertEquals(listOf("a", "b"), out.map { it.word })
+    }
+
+    @Test
+    fun `assembleSession first round keeps all due plus new up to limit`() {
+        val due = listOf(e("d1"), e("d2"))
+        val fresh = listOf(e("n1"), e("n2"), e("n3"))
+        val out = VocabSrs.assembleSession(due, fresh, newLimit = 2, roundTwo = false)
+        assertEquals(listOf("d1", "d2", "n1", "n2"), out.map { it.word })
+    }
+
+    @Test
+    fun `assembleSession second round caps total to daily plan`() {
+        // 整书 5 词恰好全部到期：第二轮应按计划只给 2 题，而不是每次都整本
+        val due = listOf(e("a"), e("b"), e("c"), e("d"), e("e"))
+        val out = VocabSrs.assembleSession(due, emptyList(), newLimit = 2, roundTwo = true)
+        assertEquals(2, out.size)
+        assertEquals(listOf("a", "b"), out.map { it.word })
+    }
+
+    @Test
+    fun `assembleSession second round mixes due then relearn batch up to plan`() {
+        val due = listOf(e("d1"))
+        val fresh = listOf(e("r1"), e("r2"), e("r3"))
+        val out = VocabSrs.assembleSession(due, fresh, newLimit = 2, roundTwo = true)
+        assertEquals(listOf("d1", "r1"), out.map { it.word })
+    }
+
+    @Test
+    fun `assembleSession second round with no plan keeps whole pool`() {
+        val due = listOf(e("a"), e("b"))
+        val out = VocabSrs.assembleSession(due, emptyList(), newLimit = 0, roundTwo = true)
+        assertEquals(listOf("a", "b"), out.map { it.word })
+    }
 }

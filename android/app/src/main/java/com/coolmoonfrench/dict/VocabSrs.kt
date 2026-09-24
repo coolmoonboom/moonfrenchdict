@@ -81,15 +81,29 @@ class VocabSrs(context: Context, bookKey: String) {
         }.sortedBy { it.second }.map { it.first }
     }
 
-    /** 尚未学习的新词（保持池内原顺序） */
+    /**
+     * 尚未学习的新词（保持池内原顺序）。
+     * 全部学完（进入下一轮）后返回整池，供「第二轮」按计划分批重学。
+     */
     fun newWords(pool: List<VocabEntry>): List<VocabEntry> =
-        pool.filter { stage(it.word) == null }
+        orderNewWords(pool) { stage(it) != null }
 
     /**
      * 组一次练习队列：到期复习词在前（按到期先后），其后补新词至上限。
+     * 新词与复习词去重，避免同词重复入队。
+     *
+     * 第二轮（整书已学完、无未学词）时，`newWords` 会回退整池，若此时到期词又恰好
+     * 覆盖整本书，直接拼接会导致「每次开始学习都给出整本（如固定 100 题）」。
+     * 因此第二轮统一按每日计划 [newLimit] 截断，分批重学。
      */
-    fun buildSession(pool: List<VocabEntry>, newLimit: Int): List<VocabEntry> =
-        dueWords(pool) + newWords(pool).take(newLimit.coerceAtLeast(0))
+    fun buildSession(pool: List<VocabEntry>, newLimit: Int): List<VocabEntry> {
+        val due = dueWords(pool)
+        val dueSet = due.mapTo(HashSet()) { it.word }
+        val unstarted = pool.filter { stage(it.word) == null }
+        val roundTwo = pool.isNotEmpty() && unstarted.isEmpty()
+        val fresh = (if (roundTwo) pool else unstarted).filter { it.word !in dueSet }
+        return assembleSession(due, fresh, newLimit, roundTwo)
+    }
 
     /**
      * 按「首次学习日」分组，返回全部已学习词（含尚未到期的），供「待复习」页按天选择。
@@ -184,6 +198,34 @@ class VocabSrs(context: Context, bookKey: String) {
 
         /** 某阶段对应的复习间隔（天） */
         fun intervalDays(stage: Int): Int = INTERVALS[stage.coerceIn(0, INTERVALS.size - 1)]
+
+        /**
+         * 选「新词」纯函数（可脱离 Android 测试）：优先返回未学词；
+         * 若全部已学（第二轮），回退返回整池，供按计划分批重学。
+         */
+        fun orderNewWords(
+            pool: List<VocabEntry>,
+            started: (String) -> Boolean
+        ): List<VocabEntry> {
+            val unstarted = pool.filter { !started(it.word) }
+            return if (unstarted.isNotEmpty()) unstarted else pool
+        }
+
+        /**
+         * 组队列纯函数（可脱离 Android 测试）：
+         * - 第二轮 [roundTwo]=true 且计划 >0 时，把（到期 + 重学候选）整体截断到计划题数；
+         * - 否则到期词全部保留，新词最多补 [newLimit] 个。
+         */
+        fun assembleSession(
+            due: List<VocabEntry>,
+            fresh: List<VocabEntry>,
+            newLimit: Int,
+            roundTwo: Boolean
+        ): List<VocabEntry> {
+            val quota = newLimit.coerceAtLeast(0)
+            return if (roundTwo && quota > 0) (due + fresh).take(quota)
+            else due + fresh.take(quota)
+        }
 
         /** 单词书键（稳定、可直接做 prefs 文件名后缀） */
         fun bookKey(verbMode: Boolean, levelId: String): String =

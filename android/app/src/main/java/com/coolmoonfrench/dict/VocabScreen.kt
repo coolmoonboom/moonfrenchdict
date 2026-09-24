@@ -20,6 +20,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -171,7 +173,10 @@ private fun VocabHomeView(
 ) {
     val stats = remember(pool, refreshKey) { srs.stats(pool) }
     var plan by remember(levelId) { mutableIntStateOf(srs.dailyPlan()) }
-    val newTodo = if (plan > 0) minOf(stats.notStarted, plan) else 0
+    // 第一轮：按计划展示未学新词数；第二轮（无未学词）：按计划展示重学批次
+    val newTodo = if (plan > 0) {
+        if (stats.notStarted > 0) minOf(stats.notStarted, plan) else minOf(stats.learning + stats.mastered, plan)
+    } else 0
     val dueTodo = stats.due
     // 全部单词都学过一遍 → 书名加「（第二轮）」
     val bookTitle = if (stats.notStarted == 0 && stats.learned > 0) {
@@ -642,6 +647,9 @@ private fun VocabQuizScreen(
     var longPressed by remember { mutableIntStateOf(-1) }
     var example by remember { mutableStateOf<VocabExamples.Example?>(null) }
     var finished by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
+    val repository = remember { DictRepository(context) }
+    var fav by remember { mutableStateOf(false) }
 
     val target = queue.getOrNull(index)
 
@@ -659,6 +667,8 @@ private fun VocabQuizScreen(
         selected = null
         longPressed = -1
         example = null
+        showDetails = false
+        fav = target.word.isNotEmpty() && repository.isFavorite(target.word)
     }
 
     val current = question
@@ -760,6 +770,8 @@ private fun VocabQuizScreen(
         }
 
         if (current != null) {
+            // 选择题界面元素整体下移约 3 厘米（1cm ≈ 63dp）
+            Spacer(Modifier.height(189.dp))
             LinearProgressIndicator(
                 progress = { (index + 1f) / queue.size },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
@@ -783,6 +795,8 @@ private fun VocabQuizScreen(
                     question = current,
                     example = example,
                     showExample = current.frenchToFront || answered,
+                    showDetails = showDetails,
+                    onToggleDetails = { showDetails = !showDetails },
                     onSpeakWord = {
                         Espeak.speakWithFeedback(context, current.target.word, deterministic = true)
                     },
@@ -873,11 +887,34 @@ private fun VocabQuizScreen(
                 }
 
                 if (!answered) {
-                    OutlinedButton(
-                        onClick = { master() },
-                        modifier = Modifier.fillMaxWidth().height(46.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("已掌握", fontSize = 15.sp)
+                        OutlinedButton(
+                            onClick = {
+                                if (fav) repository.removeFavorite(current.target.word)
+                                else repository.addFavorite(current.target.word)
+                                fav = !fav
+                            },
+                            modifier = Modifier.weight(1f).height(46.dp)
+                        ) {
+                            Icon(
+                                if (fav) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = if (fav) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (fav) "已收藏" else "收藏", fontSize = 15.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { master() },
+                            modifier = Modifier.weight(1f).height(46.dp)
+                        ) {
+                            Text("已掌握", fontSize = 15.sp)
+                        }
                     }
                 }
 
@@ -930,12 +967,14 @@ private fun VocabQuizScreen(
     }
 }
 
-/** 顶部目标 + 示例句卡片 */
+/** 顶部目标 + 示例句卡片。法→中模式下点按单词可展开音标/词性/含义等详情。 */
 @Composable
 private fun TargetCard(
     question: VocabQuestion,
     example: VocabExamples.Example?,
     showExample: Boolean,
+    showDetails: Boolean,
+    onToggleDetails: () -> Unit,
     onSpeakWord: () -> Unit,
     onSpeakExample: () -> Unit
 ) {
@@ -951,7 +990,12 @@ private fun TargetCard(
                     fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .then(
+                            if (question.frenchToFront) Modifier.clickable { onToggleDetails() }
+                            else Modifier
+                        )
                 )
                 IconButton(onClick = onSpeakWord, modifier = Modifier.size(36.dp)) {
                     Icon(
@@ -971,6 +1015,25 @@ private fun TargetCard(
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                     )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (showDetails) "点按单词收起详情" else "点按单词查看释义 / 词性 / 例句",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f)
+                )
+                if (showDetails) {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                            DetailLine("音标", FrenchIpa.wrap(question.target.word).ifBlank { "—" })
+                            DetailLine("词性", question.target.pos.ifBlank { "—" })
+                            DetailLine("含义", question.target.meaning.ifBlank { "—" })
+                        }
+                    }
                 }
             }
 
@@ -1006,6 +1069,25 @@ private fun TargetCard(
                 }
             }
         }
+    }
+}
+
+/** 详情面板中的一行「标签 + 内容」。 */
+@Composable
+private fun DetailLine(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(48.dp)
+        )
+        Text(
+            value,
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
