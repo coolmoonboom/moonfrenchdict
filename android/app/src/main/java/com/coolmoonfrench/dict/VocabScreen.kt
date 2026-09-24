@@ -715,6 +715,9 @@ private fun VocabQuizScreen(
     }
 
     if (finished) {
+        // 结果页（含「太棒了」）必须自己接管返回键：
+        // 否则此阶段答题页的 BackHandler 已随组合移除，返回会穿透到语法页，出现概率性退出到软件主页
+        BackHandler { onFinish() }
         val stats = srs.stats(pool)
         VocabResultView(
             title = title,
@@ -825,6 +828,7 @@ private fun VocabQuizScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .heightIn(min = 64.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(bgColor)
                             .combinedClickable(
@@ -832,12 +836,12 @@ private fun VocabQuizScreen(
                                 onClick = { answer(oi) },
                                 onLongClick = { longPressed = if (longPressed == oi) -1 else oi }
                             )
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(24.dp)
+                                .size(30.dp)
                                 .clip(CircleShape)
                                 .background(
                                     when {
@@ -850,7 +854,7 @@ private fun VocabQuizScreen(
                         ) {
                             Text(
                                 letter,
-                                fontSize = 13.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = if (answered && (isThisCorrect || isThisSelected)) Color.White
                                 else MaterialTheme.colorScheme.onSurface
@@ -860,12 +864,12 @@ private fun VocabQuizScreen(
                         Spacer(Modifier.width(12.dp))
 
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(option.text, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(option.text, fontSize = 18.sp, color = MaterialTheme.colorScheme.onSurface)
                             if (expandedZh.isNotBlank()) {
                                 Spacer(Modifier.height(2.dp))
                                 Text(
                                     expandedZh,
-                                    fontSize = 12.sp,
+                                    fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -874,12 +878,12 @@ private fun VocabQuizScreen(
                         if (current.frenchToFront.not()) {
                             IconButton(onClick = {
                                 Espeak.speakWithFeedback(context, option.entry.word, deterministic = true)
-                            }, modifier = Modifier.size(34.dp)) {
+                            }, modifier = Modifier.size(40.dp)) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.VolumeUp,
                                     contentDescription = "朗读",
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
