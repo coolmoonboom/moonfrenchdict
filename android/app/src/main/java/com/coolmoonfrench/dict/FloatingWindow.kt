@@ -67,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
@@ -531,9 +532,12 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                     }
                 }
         ) {
-            // 顶部：单词 + 例句
+            // 顶部：单词 + 例句（原生字幕风格：黑底白字，黑底随文字内容自适应）
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.Black, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -541,15 +545,14 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                         text = word.ifEmpty { "—" },
                         fontSize = (26 * settings.floatFontScale).sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (word.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface
+                        color = Color.White
                     )
                     if (word.isNotEmpty()) {
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = FrenchIpa.wrap(word),
                             fontSize = (13 * settings.floatFontScale).sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color.White.copy(alpha = 0.8f)
                         )
                     }
                     Spacer(Modifier.weight(1f))
@@ -560,7 +563,7 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                             Icon(
                                 Icons.AutoMirrored.Filled.VolumeUp,
                                 contentDescription = "朗读单词",
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = Color.White,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -571,45 +574,44 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                         text = ex.first,
                         fontSize = (14 * settings.floatFontScale).sp,
                         lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = Color.White
                     )
                     if (settings.floatShowTranslation) {
                         Text(
                             text = ex.second,
                             fontSize = (12 * settings.floatFontScale).sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = Color.White.copy(alpha = 0.8f)
                         )
                     }
                 }
             }
 
-            HorizontalDivider(
-                modifier = Modifier.padding(vertical = 6.dp),
-                color = MaterialTheme.colorScheme.outlineVariant
-            )
-
             // 底部控制：锁（左下） + 上一句 / 暂停播放 / 下一句 / 单句循环
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 左下角常驻锁：未锁定时为开锁图标，单击锁定、长按解锁；锁定后不可拖动
+                // 左下角常驻锁：未锁定时为开锁图标；单击锁定、双击解锁；锁定后不可拖动
                 Box(
                     modifier = Modifier
                         .size(32.dp)
                         .pointerInput(locked) {
                             detectTapGestures(
                                 onTap = { locked = true },
-                                onLongPress = { locked = false }
+                                onDoubleTap = { locked = false }
                             )
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         if (locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                        contentDescription = if (locked) "已锁定（长按解锁）" else "未锁定（单击锁定）",
+                        contentDescription = if (locked) "已锁定（双击解锁）" else "未锁定（单击锁定）",
                         tint = if (locked) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        else Color.White.copy(alpha = 0.75f),
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -622,7 +624,7 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                     Icon(
                         Icons.Filled.SkipPrevious,
                         contentDescription = "上一句",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = Color.White.copy(alpha = 0.75f),
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -647,7 +649,7 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                     Icon(
                         Icons.Filled.SkipNext,
                         contentDescription = "下一句",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = Color.White.copy(alpha = 0.75f),
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -660,7 +662,7 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                         Icons.Filled.Repeat,
                         contentDescription = "单句循环",
                         tint = if (FloatingWindowState.loopOne) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        else Color.White.copy(alpha = 0.75f),
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -826,6 +828,8 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 6.dp, vertical = 2.dp)
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -858,7 +862,7 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
                 text = FloatingWindowState.subtitleLabel.ifEmpty { "实时字幕" },
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = Color.White
             )
             Spacer(Modifier.weight(1f))
             IconButton(
@@ -868,6 +872,7 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
                 Icon(
                     Icons.Filled.Close,
                     contentDescription = "关闭字幕",
+                    tint = Color.White,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -877,7 +882,11 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
             Text(
                 text = "正在聆听系统声音…",
                 fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = Color.White,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .background(Color.Black, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
             )
         } else {
             LazyColumn(
@@ -887,22 +896,30 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
                     .heightIn(max = 240.dp)
             ) {
                 items(lines) { line ->
+                    // 原生字幕风格：黑底白字，黑底随每句话内容自适应
                     Text(
                         text = line,
                         fontSize = 15.sp,
                         lineHeight = 21.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(vertical = 2.dp)
+                        color = Color.White,
+                        modifier = Modifier
+                            .padding(vertical = 2.dp)
+                            .background(Color.Black, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
                     )
                 }
                 if (partial.isNotEmpty()) {
                     item {
+                        // 识别中的半句：逐词蹦出，黑底随已识别的词增长，未出现的部分保持空白
                         Text(
                             text = partial,
                             fontSize = 15.sp,
                             lineHeight = 21.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 2.dp)
+                            color = Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier
+                                .padding(vertical = 2.dp)
+                                .background(Color.Black, RoundedCornerShape(4.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
                         )
                     }
                 }

@@ -10,11 +10,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -147,7 +150,7 @@ fun LookupScreen(
                 contractionSurface = contraction.surface
                 contractionPrefix = contraction.prefix
                 contractionBase = contraction.base
-                expansion = if (verb) "动词原形：${first?.word}" else null
+                expansion = if (verb) "动词原形：${first.word}" else null
                 similar = sim
                 related = rel
                 derived = der
@@ -533,9 +536,30 @@ fun LookupScreen(
                                         text = entry.word,
                                         fontSize = 28.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.weight(1f)
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
+                                    // 收藏星标：紧挨最大的词；未收藏为描边主题色，已收藏为黄色实心
+                                    val starFav = favoriteWords.contains(entry.word)
+                                    IconButton(
+                                        onClick = {
+                                            if (starFav) {
+                                                repository.removeFavorite(entry.word)
+                                                favoriteWords = favoriteWords - entry.word
+                                            } else {
+                                                repository.addFavorite(entry.word)
+                                                favoriteWords = favoriteWords + entry.word
+                                            }
+                                        },
+                                        modifier = Modifier.size(60.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (starFav) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                            contentDescription = if (starFav) "取消收藏" else "收藏",
+                                            tint = if (starFav) Color(0xFFFFC107) else MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(40.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.weight(1f))
                                     if (entry.pos.isNotEmpty()) {
                                         Surface(
                                             shape = MaterialTheme.shapes.small,
@@ -1022,31 +1046,6 @@ fun LookupScreen(
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-
-                // 收藏按钮
-                if (selected != null) {
-                    item {
-                        Spacer(Modifier.height(8.dp))
-                        val isFav = favoriteWords.contains(selected!!.word)
-                        OutlinedButton(
-                            onClick = {
-                                val w = selected!!.word
-                                if (isFav) {
-                                    repository.removeFavorite(w)
-                                    favoriteWords = repository.loadFavorites().map { it.word }.toSet()
-                                } else {
-                                    repository.addFavorite(w)
-                                    favoriteWords = favoriteWords + w
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp)
-                        ) {
-                            Text(if (isFav) "★ 已收藏" else "☆ 收藏")
                         }
                     }
                 }

@@ -181,7 +181,7 @@ private fun WordFavoritesTab(repository: DictRepository) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 多选模式顶部操作条：全选 / 复制 / 反选 / 移除 / 取消
+        // 多选模式顶部操作条：全选 / 复制 / 反选 / 播放 / 移除 / 取消
         if (selectionMode) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
@@ -212,6 +212,27 @@ private fun WordFavoritesTab(repository: DictRepository) {
                     selected.clear()
                     selected.addAll(inverted)
                 }) { Text("反选", fontSize = 13.sp) }
+                TextButton(
+                    onClick = {
+                        // 播放：把所选单词交给悬浮窗，按列表顺序循环播报（与已掌握列表一致）
+                        val picked = wordFavs
+                            .filter { selected.contains(it.word) }
+                            .map { VocabEntry(it.word, it.pos, "", it.meaning, false) }
+                        if (picked.isEmpty()) return@TextButton
+                        if (!FloatingWindowControl.overlayPermissionGranted(context)) {
+                            Toast.makeText(
+                                context,
+                                "需要悬浮窗权限，请在系统设置中允许「酷月法语」显示在其他应用上层",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            FloatingWindowControl.requestPermission(context)
+                            return@TextButton
+                        }
+                        FloatingWindowControl.startListLoop(context, picked, 0)
+                        exitSelection()
+                    },
+                    enabled = selected.isNotEmpty()
+                ) { Text("播放", fontSize = 13.sp) }
                 TextButton(
                     onClick = {
                         selected.toList().forEach { repository.removeFavorite(it) }

@@ -201,7 +201,7 @@ fun MainTabs(
     aiPrefs: AIPreferences,
     onExtractSubtitles: () -> Unit
 ) {
-    var selected by rememberSaveable { mutableStateOf(0) }
+    var selected by rememberSaveable { mutableStateOf(1) }
     var showSettings by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showGrammar by remember { mutableStateOf(false) }
