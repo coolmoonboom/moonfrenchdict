@@ -418,6 +418,25 @@ fun MainTabs(
         }
     }
 
+    // 系统返回键处理（全面屏手势/返回键统一走这里）。
+    // 注意：必须声明在各覆盖层之前，这样覆盖层内部更细一级的 BackHandler 后注册、优先生效，
+    // 返回手势会逐层回退（如 收藏详情 -> 收藏列表 -> 主界面），而不是直接退出整页。
+    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
+    BackHandler(enabled = showFavorites) { showFavorites = false }
+    BackHandler(enabled = showAISettings) {
+        showAISettings = false
+        aiRefreshKey++
+    }
+    BackHandler(enabled = showHistory) { showHistory = false }
+    BackHandler(enabled = showGrammar) { showGrammar = false }
+    BackHandler(enabled = showGrammarLearn) { showGrammarLearn = false }
+    BackHandler(enabled = showPronouns) { showPronouns = false }
+    BackHandler(enabled = showPhonetics) { showPhonetics = false }
+    BackHandler(enabled = showQuestionTypes) { showQuestionTypes = false }
+    BackHandler(enabled = showVideoImport) { showVideoImport = false }
+    BackHandler(enabled = showVoiceChat) { showVoiceChat = false }
+    BackHandler(enabled = showCalNum) { showCalNum = false }
+
     // 收藏（双栏：AI收藏 + 单词句子收藏）
     if (showFavorites) {
         Surface(
@@ -560,21 +579,6 @@ fun MainTabs(
             )
         }
     }
-
-    // 系统返回键处理：二级界面优先关闭，抽屉打开时先关闭抽屉
-    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
-    BackHandler(enabled = showFavorites) { showFavorites = false }
-    BackHandler(enabled = showAISettings) {
-        showAISettings = false
-        aiRefreshKey++
-    }
-    BackHandler(enabled = showHistory) { showHistory = false }
-    BackHandler(enabled = showGrammar) { showGrammar = false }
-    BackHandler(enabled = showPronouns) { showPronouns = false }
-    BackHandler(enabled = showPhonetics) { showPhonetics = false }
-    BackHandler(enabled = showQuestionTypes) { showQuestionTypes = false }
-    BackHandler(enabled = showVideoImport) { showVideoImport = false }
-    BackHandler(enabled = showVoiceChat) { showVoiceChat = false }
 
     // 设置弹窗
     if (showSettings) {

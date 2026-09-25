@@ -3,6 +3,7 @@ package com.coolmoonfrench.dict
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -90,6 +91,9 @@ fun VideoTextFavoritesScreen(
 ) {
     var list by remember { mutableStateOf(prefs.loadVideoTextFavorites()) }
     var viewing by remember { mutableStateOf<VideoTextFavorite?>(null) }
+
+    // 全面屏手势返回：先关全文弹窗，再退回上一级
+    BackHandler(enabled = viewing == null) { onBack() }
 
     Scaffold(
         topBar = {
@@ -197,6 +201,9 @@ fun SubtitleSessionsScreen(
     var viewing by remember { mutableStateOf<VideoTextRecord?>(null) }
     // 收藏状态变化时自增，驱动星标刷新
     var favVersion by remember { mutableStateOf(0) }
+
+    // 全面屏手势返回：先关全文弹窗，再退回上一级
+    BackHandler(enabled = viewing == null) { onBack() }
 
     Scaffold(
         topBar = {

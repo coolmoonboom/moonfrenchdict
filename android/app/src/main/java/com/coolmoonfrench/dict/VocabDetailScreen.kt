@@ -1,5 +1,6 @@
 package com.coolmoonfrench.dict
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -37,7 +38,8 @@ fun VocabDetailScreen(
     words: List<VocabEntry>,
     initialIndex: Int,
     onNavigate: (Int) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    floatingLoop: Boolean = false
 ) {
     val context = LocalContext.current
     val repository = remember { DictRepository(context) }
@@ -50,10 +52,27 @@ fun VocabDetailScreen(
     var meanings by remember { mutableStateOf<List<String>>(emptyList()) }
     var example by remember { mutableStateOf<VocabExamples.Example?>(null) }
     var fav by remember { mutableStateOf(false) }
-    var loopActive by remember { mutableStateOf(false) }
+    var localLoopActive by remember { mutableStateOf(false) }
     var loopJob by remember { mutableStateOf<Job?>(null) }
 
+    // 已掌握列表的循环由悬浮窗服务驱动（离开本页/回到桌面后仍持续播报并显示词卡），
+    // 这里只读取其状态用于按钮显示；其他列表仍用页面内的简易循环。
+    val floatingLoopActive = floatingLoop &&
+        FloatingWindowState.visible &&
+        FloatingWindowState.mode == FloatingMode.WORD &&
+        FloatingWindowState.listLoop
+    val loopActive = if (floatingLoop) floatingLoopActive else localLoopActive
+
     BackHandler { onBack() }
+
+    // 悬浮窗自动切下一词时，本页跟随显示当前词。
+    LaunchedEffect(floatingLoop, FloatingWindowState.listLoop, FloatingWindowState.index) {
+        if (floatingLoop && FloatingWindowState.listLoop &&
+            FloatingWindowState.index >= 0 && FloatingWindowState.index != index
+        ) {
+            onNavigate(FloatingWindowState.index)
+        }
+    }
 
     LaunchedEffect(word) {
         fav = word.isNotEmpty() && repository.isFavorite(word)
@@ -78,21 +97,43 @@ fun VocabDetailScreen(
         }
     }
 
-    /** 停止列表循环：取消循环协程并停掉正在播放的语音。 */
-    fun stopLoop() {
-        loopActive = false
+    /** 停止页面内的简易列表循环（非已掌握列表）。 */
+    fun stopLocalLoop() {
+        localLoopActive = false
         loopJob?.cancel()
         loopJob = null
         Speech.stop()
     }
 
-    /** 列表循环：从当前词起，依次播报「单词 + 例句」，播完自动切下一词，到末尾回到首词。 */
+    /**
+     * 列表循环开关。
+     * - 已掌握列表：交给悬浮窗服务，返回桌面后悬浮窗持续显示词卡并播报；
+     * - 其他列表：沿用页面内循环。
+     */
     fun toggleLoop() {
-        if (loopActive) {
-            stopLoop()
+        if (floatingLoop) {
+            if (floatingLoopActive) {
+                FloatingWindowControl.stopListLoop()
+                Speech.stop()
+                return
+            }
+            if (!FloatingWindowControl.overlayPermissionGranted(context)) {
+                Toast.makeText(
+                    context,
+                    "需要悬浮窗权限，请在系统设置中允许「酷月法语」显示在其他应用上层",
+                    Toast.LENGTH_LONG
+                ).show()
+                FloatingWindowControl.requestPermission(context)
+                return
+            }
+            FloatingWindowControl.startListLoop(context, words, index)
             return
         }
-        loopActive = true
+        if (localLoopActive) {
+            stopLocalLoop()
+            return
+        }
+        localLoopActive = true
         loopJob = scope.launch {
             var i = index
             while (true) {
@@ -106,7 +147,7 @@ fun VocabDetailScreen(
                 i = (i + 1) % words.size
                 onNavigate(i)
             }
-            loopActive = false
+            localLoopActive = false
         }
     }
 

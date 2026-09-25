@@ -3,6 +3,7 @@ package com.coolmoonfrench.dict
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
@@ -180,7 +181,7 @@ private fun WordFavoritesTab(repository: DictRepository) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 多选模式顶部操作条：全选 / 反选 / 移除 / 取消
+        // 多选模式顶部操作条：全选 / 复制 / 反选 / 移除 / 取消
         if (selectionMode) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
@@ -192,6 +193,19 @@ private fun WordFavoritesTab(repository: DictRepository) {
                     selected.clear()
                     selected.addAll(wordFavs.map { it.word })
                 }) { Text("全选", fontSize = 13.sp) }
+                TextButton(
+                    onClick = {
+                        // 批量复制：按列表顺序，每个单词内容（单词 + 释义）之间用回车分隔，不加头尾
+                        val picked = wordFavs.filter { selected.contains(it.word) }
+                        val text = picked.joinToString("\n") { "${it.word}\n${it.meaning}" }
+                        if (text.isNotEmpty()) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("words", text))
+                            Toast.makeText(context, "已复制 ${picked.size} 个单词", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = selected.isNotEmpty()
+                ) { Text("复制", fontSize = 13.sp) }
                 TextButton(onClick = {
                     val all = wordFavs.map { it.word }
                     val inverted = all.filterNot { selected.contains(it) }

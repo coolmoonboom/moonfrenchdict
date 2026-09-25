@@ -1,11 +1,17 @@
 package com.coolmoonfrench.dict
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.net.Uri
+import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
@@ -64,6 +70,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -79,6 +96,9 @@ object FloatingWindowState {
     var index by androidx.compose.runtime.mutableIntStateOf(-1)
     var visible by androidx.compose.runtime.mutableStateOf(false)
     var loopOne by androidx.compose.runtime.mutableStateOf(false)
+
+    /** 列表循环：按队列顺序「单词→例句」滚动播报，播完自动切下一词（已掌握列表循环用）。 */
+    var listLoop by androidx.compose.runtime.mutableStateOf(false)
 
     /** 悬浮窗当前模式 */
     var mode by androidx.compose.runtime.mutableStateOf(FloatingMode.WORD)
@@ -131,6 +151,7 @@ object FloatingWindowControl {
             FloatingWindowState.index = -1
             FloatingWindowState.visible = true
             FloatingWindowState.loopOne = false
+            FloatingWindowState.listLoop = false
             context.startService(Intent(context, FloatingWindowService::class.java))
         }
         val i = FloatingWindowState.queue.indexOfFirst { it.word == entry.word }
@@ -140,6 +161,31 @@ object FloatingWindowControl {
         } else {
             FloatingWindowState.index = i
         }
+    }
+
+    /**
+     * 开启「已掌握列表循环」：把整份列表作为悬浮窗队列，从 startIndex 起按顺序
+     * 「单词→例句」播报并自动切下一词，悬浮窗同步显示当前词卡。
+     */
+    fun startListLoop(context: Context, words: List<VocabEntry>, startIndex: Int) {
+        if (words.isEmpty()) return
+        FloatingWindowState.mode = FloatingMode.WORD
+        FloatingWindowState.queue.clear()
+        FloatingWindowState.queue.addAll(words)
+        FloatingWindowState.index = startIndex.coerceIn(0, words.size - 1)
+        FloatingWindowState.loopOne = false
+        FloatingWindowState.listLoop = true
+        FloatingWindowState.visible = true
+        runCatching {
+            context.startService(Intent(context, FloatingWindowService::class.java))
+        }
+    }
+
+    /** 停止列表循环：停播但不关闭悬浮窗（窗口由用户自行关闭，或沿用原队列）。 */
+    fun stopListLoop() {
+        FloatingWindowState.listLoop = false
+        FloatingWindowState.loopOne = false
+        Espeak.stop()
     }
 
     /** 从队列移除词；队列清空则停止服务。 */
@@ -163,6 +209,7 @@ object FloatingWindowControl {
         FloatingWindowState.index = -1
         FloatingWindowState.queue.clear()
         FloatingWindowState.loopOne = false
+        FloatingWindowState.listLoop = false
         runCatching {
             context.stopService(Intent(context, FloatingWindowService::class.java))
         }
@@ -210,17 +257,34 @@ object SubtitleWindowControl {
 }
 
 /** 悬浮窗服务：在 WindowManager 上挂载一个 ComposeView，常驻于任何界面之上。 */
-class FloatingWindowService : Service() {
+class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
+
+    companion object {
+        private const val NOTIF_CHANNEL_ID = "floating_window"
+        private const val NOTIF_ID = 4102
+    }
 
     private lateinit var wm: WindowManager
     private var overlay: ComposeView? = null
     private var params: WindowManager.LayoutParams? = null
+
+    // 悬浮窗的 ComposeView 不隶属于任何 Activity，必须自备 Lifecycle/ViewModelStore/SavedState，
+    // 否则 Compose 在 onAttachedToWindow 时找不到 ViewTreeLifecycleOwner 会直接崩溃。
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private val viewModelStoreInstance = ViewModelStore()
+    private val savedStateController = SavedStateRegistryController.create(this)
+
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val viewModelStore: ViewModelStore get() = viewModelStoreInstance
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        savedStateController.performRestore(null)
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
     }
 
     /** 移动悬浮窗（拖动时由 Compose 手势回调）。 */
@@ -234,7 +298,61 @@ class FloatingWindowService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (overlay == null) showOverlay()
+        updateForeground()
         return START_STICKY
+    }
+
+    /**
+     * 词卡模式（已掌握循环）提升为前台服务，保证回到桌面后长时间不被系统回收；
+     * 字幕模式的前台由 SubtitleCaptureService（mediaProjection）负责，这里撤下自己的通知避免重复。
+     */
+    private fun updateForeground() {
+        if (FloatingWindowState.mode == FloatingMode.WORD) {
+            runCatching {
+                val notification = buildNotification()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+                } else {
+                    startForeground(NOTIF_ID, notification)
+                }
+            }
+        } else {
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
+        }
+    }
+
+    private fun buildNotification(): Notification {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (mgr.getNotificationChannel(NOTIF_CHANNEL_ID) == null) {
+                mgr.createNotificationChannel(
+                    NotificationChannel(
+                        NOTIF_CHANNEL_ID,
+                        "悬浮窗",
+                        NotificationManager.IMPORTANCE_LOW
+                    )
+                )
+            }
+        }
+        val open = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, NOTIF_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        return builder
+            .setContentTitle("法语悬浮窗")
+            .setContentText("正在显示悬浮卡片并朗读…")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentIntent(open)
+            .setOngoing(true)
+            .build()
     }
 
     private fun showOverlay() {
@@ -257,6 +375,9 @@ class FloatingWindowService : Service() {
         params = p
 
         val view = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingWindowService)
+            setViewTreeViewModelStoreOwner(this@FloatingWindowService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingWindowService)
             setContent {
                 FrenchDictTheme {
                     when (FloatingWindowState.mode) {
@@ -275,6 +396,7 @@ class FloatingWindowService : Service() {
         overlay?.let { runCatching { wm.removeView(it) } }
         overlay = null
         FloatingWindowState.visible = false
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
     }
 }
@@ -318,14 +440,23 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         }
     }
 
-    // 朗读：切词自动播一次「单词→例句」；单句循环开启后连续播报当前词
-    LaunchedEffect(word, FloatingWindowState.loopOne) {
+    // 朗读：切词自动播一次「单词→例句」；单句循环则反复播当前词；
+    // 列表循环则播完自动切下一词（切词会重启本效果继续播，形成连续循环）。
+    LaunchedEffect(word, FloatingWindowState.loopOne, FloatingWindowState.listLoop) {
         if (word.isEmpty()) return@LaunchedEffect
         while (true) {
             Espeak.speakAwait(word, deterministic = true)
             val ex = withContext(Dispatchers.IO) { VocabExamples.lookup(context, word) }
             if (ex != null) Espeak.speakAwait(ex.fr)
-            if (!FloatingWindowState.loopOne) break
+            if (FloatingWindowState.loopOne) continue
+            if (FloatingWindowState.listLoop) {
+                val before = FloatingWindowState.current()?.word
+                FloatingWindowState.next()
+                // 队列只有一个词时 next 不改变当前词，继续在本效果内循环，避免卡死。
+                if (FloatingWindowState.current()?.word == before) continue
+                break
+            }
+            break
         }
     }
 

@@ -6,6 +6,7 @@
     <!-- 在线视频字幕：捕获系统内部音频，需 mediaProjection 前台服务 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 口语对话：长按录音，使用 Vosk 离线识别麦克风语音 -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -51,7 +52,8 @@
         </provider>
         <service
             android:name=".FloatingWindowService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
         <service
             android:name=".SubtitleCaptureService"
             android:exported="false"

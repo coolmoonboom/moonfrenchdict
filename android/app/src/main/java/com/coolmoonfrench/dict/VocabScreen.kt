@@ -50,7 +50,7 @@ private enum class VocabDir(val label: String) {
 private sealed class VocabRoute {
     object Home : VocabRoute()
     class WordList(val words: List<VocabEntry>, val title: String, val showFloatingToggle: Boolean = false) : VocabRoute()
-    class Detail(val words: List<VocabEntry>, val index: Int, val listTitle: String) : VocabRoute()
+    class Detail(val words: List<VocabEntry>, val index: Int, val listTitle: String, val floatingLoop: Boolean = false) : VocabRoute()
     object ReviewDays : VocabRoute()
     class Quiz(val fixed: List<VocabEntry>?, val title: String, val startIndex: Int = 0) : VocabRoute()
 }
@@ -156,7 +156,7 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
             VocabListScreen(
                 title = r.title,
                 words = r.words,
-                onOpen = { i -> route = VocabRoute.Detail(r.words, i, r.title) },
+                onOpen = { i -> route = VocabRoute.Detail(r.words, i, r.title, r.showFloatingToggle) },
                 onBack = { route = VocabRoute.Home },
                 showFloatingToggle = r.showFloatingToggle
             )
@@ -166,8 +166,9 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
             VocabDetailScreen(
                 words = r.words,
                 initialIndex = r.index,
-                onNavigate = { i -> route = VocabRoute.Detail(r.words, i, r.listTitle) },
-                onBack = { route = VocabRoute.WordList(r.words, r.listTitle) }
+                onNavigate = { i -> route = VocabRoute.Detail(r.words, i, r.listTitle, r.floatingLoop) },
+                onBack = { route = VocabRoute.WordList(r.words, r.listTitle, r.floatingLoop) },
+                floatingLoop = r.floatingLoop
             )
         }
 

@@ -27,8 +27,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.PublicOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
@@ -77,7 +75,6 @@ fun AIScreen(
     var dataReady by remember { mutableStateOf(false) }
     var favVersion by remember { mutableStateOf(0) }
     var showConversations by remember { mutableStateOf(false) }
-    var webSearchEnabled by remember { mutableStateOf(false) }
     var ocrLoading by remember { mutableStateOf(false) }
     var ocrError by remember { mutableStateOf<String?>(null) }
     var pendingAttachments by remember { mutableStateOf<List<AIAttachment>>(emptyList()) }
@@ -170,17 +167,7 @@ fun AIScreen(
         error = null
         sendJob = scope.launch {
             try {
-                val reply = if (webSearchEnabled) {
-                    val results = WebSearcher.search(q.trim())
-                    val webContext = if (results.isNotEmpty()) {
-                        results.joinToString("\n\n") { "- ${it.title}: ${it.snippet}（来源：${it.url}）" }
-                    } else {
-                        "（本次联网搜索未获取到结果）"
-                    }
-                    AIClient.chat(currentConfig, newList, webContext)
-                } else {
-                    AIClient.chat(currentConfig, newList)
-                }
+                val reply = AIClient.chat(currentConfig, newList)
                 save(newList + AIMessage(role = "assistant", content = reply))
             } catch (e: CancellationException) {
                 // 用户点了停止：静默结束，保留已发送的用户消息
@@ -578,26 +565,6 @@ fun AIScreen(
                         Icon(
                             Icons.Filled.InsertDriveFile,
                             contentDescription = "添加文件",
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    FilledTonalIconButton(
-                        onClick = { webSearchEnabled = !webSearchEnabled },
-                        enabled = hasConfig,
-                        modifier = Modifier.size(40.dp),
-                        colors = IconButtonDefaults.filledTonalIconButtonColors(
-                            containerColor = if (webSearchEnabled)
-                                MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = if (webSearchEnabled)
-                                MaterialTheme.colorScheme.onPrimary
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    ) {
-                        Icon(
-                            if (webSearchEnabled) Icons.Filled.Public else Icons.Filled.PublicOff,
-                            contentDescription = if (webSearchEnabled) "联网已开启" else "开启联网搜索",
                             modifier = Modifier.size(18.dp)
                         )
                     }
