@@ -104,7 +104,7 @@ fun AISettingsScreen(
 
             // 模型 API 地址
             SectionLabel("模型 API 地址")
-            OutlinedTextField(
+            SelectableOutlinedTextField(
                 value = apiUrl,
                 onValueChange = { apiUrl = it; errorMsg = null },
                 modifier = Modifier.fillMaxWidth(),
@@ -119,7 +119,7 @@ fun AISettingsScreen(
 
             // API Token
             SectionLabel("API Token")
-            OutlinedTextField(
+            SelectableOutlinedTextField(
                 value = apiToken,
                 onValueChange = { apiToken = it; errorMsg = null },
                 modifier = Modifier.fillMaxWidth(),
@@ -144,7 +144,7 @@ fun AISettingsScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedTextField(
+                SelectableOutlinedTextField(
                     value = modelName,
                     onValueChange = { modelName = it; errorMsg = null },
                     modifier = Modifier.weight(1f),
@@ -198,7 +198,7 @@ fun AISettingsScreen(
 
             // 备注
             SectionLabel("备注（选填）")
-            OutlinedTextField(
+            SelectableOutlinedTextField(
                 value = notes,
                 onValueChange = { notes = it },
                 modifier = Modifier.fillMaxWidth(),

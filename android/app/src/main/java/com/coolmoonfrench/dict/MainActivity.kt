@@ -1,9 +1,15 @@
 package com.coolmoonfrench.dict
 
+import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -49,12 +55,56 @@ import androidx.compose.foundation.verticalScroll
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        const val ACTION_EXTRACT_SUBTITLES = "com.coolmoonfrench.dict.action.EXTRACT_SUBTITLES"
+    }
+
     private lateinit var repository: DictRepository
     private lateinit var translator: MyMemoryTranslator
     private lateinit var conjugator: VerbConjugator
     private lateinit var analyzer: SentenceAnalyzer
     private lateinit var morphology: MorphologyAnalyzer
     private lateinit var aiPrefs: AIPreferences
+
+    /** MediaProjection 授权回调：成功后启动字幕捕获前台服务。 */
+    private val projectionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
+            SubtitleCaptureService.start(this, result.resultCode, data)
+        } else {
+            Toast.makeText(this, "已取消系统音频捕获授权", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 快捷方式 / 界面按钮触发的「提取在线视频字幕」入口。 */
+    private fun beginSubtitleExtraction() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Toast.makeText(this, "系统内部音频捕获需要 Android 10 及以上", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!FloatingWindowControl.overlayPermissionGranted(this)) {
+            Toast.makeText(this, "请先授予悬浮窗权限，再重新提取字幕", Toast.LENGTH_LONG).show()
+            FloatingWindowControl.requestPermission(this)
+            return
+        }
+        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as? MediaProjectionManager
+        if (mpm == null) {
+            Toast.makeText(this, "当前设备不支持屏幕/音频捕获", Toast.LENGTH_LONG).show()
+            return
+        }
+        runCatching { projectionLauncher.launch(mpm.createScreenCaptureIntent()) }
+            .onFailure { Toast.makeText(this, "无法发起捕获授权：${it.message}", Toast.LENGTH_LONG).show() }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_EXTRACT_SUBTITLES) {
+            window.decorView.post { beginSubtitleExtraction() }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,11 +155,17 @@ class MainActivity : ComponentActivity() {
                         }
                     } else {
                         MainTabs(
-                            repository, translator, conjugator, analyzer, morphology, settings, aiPrefs
+                            repository, translator, conjugator, analyzer, morphology, settings, aiPrefs,
+                            onExtractSubtitles = { beginSubtitleExtraction() }
                         )
                     }
                 }
             }
+        }
+
+        // 从桌面快捷方式进入：直接发起字幕捕获授权
+        if (intent?.action == ACTION_EXTRACT_SUBTITLES) {
+            window.decorView.post { beginSubtitleExtraction() }
         }
     }
 }
@@ -123,7 +179,8 @@ fun MainTabs(
     analyzer: SentenceAnalyzer,
     morphology: MorphologyAnalyzer,
     settings: AppSettings,
-    aiPrefs: AIPreferences
+    aiPrefs: AIPreferences,
+    onExtractSubtitles: () -> Unit
 ) {
     var selected by rememberSaveable { mutableStateOf(0) }
     var showSettings by remember { mutableStateOf(false) }
@@ -484,7 +541,10 @@ fun MainTabs(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
         ) {
-            VideoImportScreen(onBack = { showVideoImport = false })
+            VideoImportScreen(
+                onBack = { showVideoImport = false },
+                onExtractSubtitles = onExtractSubtitles
+            )
         }
     }
 

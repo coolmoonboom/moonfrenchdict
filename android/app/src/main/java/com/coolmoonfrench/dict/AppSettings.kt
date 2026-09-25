@@ -38,6 +38,14 @@ class AppSettings(context: Context) {
     var syncIntervalHours by mutableIntStateOf(prefs.getInt("sync_interval_hours", 0))
         private set
 
+    /** 悬浮窗例句是否显示中文翻译 */
+    var floatShowTranslation by mutableStateOf(prefs.getBoolean("float_show_translation", true))
+        private set
+
+    /** 悬浮窗字体大小倍率（0.8 ~ 1.6，默认 1.0） */
+    var floatFontScale by mutableFloatStateOf(prefs.getFloat("float_font_scale", 1f))
+        private set
+
     fun updateSyncInterval(v: Int) {
         val clamped = v.coerceIn(0, 24)
         syncIntervalHours = clamped
@@ -71,6 +79,17 @@ class AppSettings(context: Context) {
         speechRate = snapped
         prefs.edit().putFloat("speech_rate", snapped).apply()
         Speech.setSpeechRate(snapped)
+    }
+
+    fun updateFloatShowTranslation(v: Boolean) {
+        floatShowTranslation = v
+        prefs.edit().putBoolean("float_show_translation", v).apply()
+    }
+
+    fun updateFloatFontScale(v: Float) {
+        val clamped = v.coerceIn(0.8f, 1.6f)
+        floatFontScale = clamped
+        prefs.edit().putFloat("float_font_scale", clamped).apply()
     }
 
     companion object {

@@ -18,6 +18,10 @@ interface VideoTextDao {
     @Query("SELECT * FROM video_text_records ORDER BY timestamp DESC")
     fun observeAll(): Flow<List<VideoTextRecord>>
 
+    /** 按来源过滤、时间倒序返回记录（如在线视频字幕 SUBTITLE）。 */
+    @Query("SELECT * FROM video_text_records WHERE source = :source ORDER BY timestamp DESC")
+    fun observeBySource(source: String): Flow<List<VideoTextRecord>>
+
     /** 删除指定记录。 */
     @Delete
     suspend fun delete(record: VideoTextRecord)

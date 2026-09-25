@@ -199,7 +199,7 @@ fun AIFavoriteDetailScreen(
                             Text("插入图片", fontSize = 12.sp)
                         }
                     }
-                    OutlinedTextField(
+                    SelectableOutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it },
                         modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),

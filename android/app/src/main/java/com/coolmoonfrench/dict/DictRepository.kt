@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.abs
 
@@ -416,29 +417,64 @@ class DictRepository(private val context: Context) {
         }.getOrElse { emptyMap() }
     }
 
-    fun loadFavorites(): List<DictEntry> = favoriteWords().mapNotNull { word ->
-        lookupExact(word).firstOrNull()
-            ?: vocabIndex[word.lowercase()]?.let { v ->
-                DictEntry(
-                    word = v.word,
-                    pos = v.pos,
-                    zh = v.meaning,
-                    en = "",
-                    meaning = v.meaning
-                )
+    fun loadFavorites(): List<DictEntry> {
+        val times = loadWordTimes()
+        return favoriteWords()
+            .mapNotNull { word ->
+                val entry = lookupExact(word).firstOrNull()
+                    ?: vocabIndex[word.lowercase()]?.let { v ->
+                        DictEntry(
+                            word = v.word,
+                            pos = v.pos,
+                            zh = v.meaning,
+                            en = "",
+                            meaning = v.meaning
+                        )
+                    }
+                entry?.let { it to (times[word] ?: 0L) }
             }
+            .sortedByDescending { it.second }
+            .map { it.first }
+    }
+
+    /** 收藏时间表（word -> epoch millis），用于「新→旧」排序。 */
+    private fun loadWordTimes(): MutableMap<String, Long> {
+        val json = prefs.getString("word_times", "{}") ?: "{}"
+        return runCatching {
+            val o = JSONObject(json)
+            val m = mutableMapOf<String, Long>()
+            o.keys().forEach { k -> m[k] = o.optLong(k, 0L) }
+            m
+        }.getOrElse { mutableMapOf() }
+    }
+
+    private fun timesJson(map: Map<String, Long>): String {
+        val o = JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        return o.toString()
     }
 
     fun addFavorite(word: String) {
         val set = prefs.getStringSet("words", emptySet())?.toMutableSet() ?: mutableSetOf()
-        set.add(word)
-        prefs.edit().putStringSet("words", set).apply()
+        val isNew = set.add(word)
+        val times = loadWordTimes()
+        if (isNew || !times.containsKey(word)) {
+            times[word] = System.currentTimeMillis()
+        }
+        prefs.edit()
+            .putStringSet("words", set)
+            .putString("word_times", timesJson(times))
+            .apply()
     }
 
     fun removeFavorite(word: String) {
         val set = prefs.getStringSet("words", emptySet())?.toMutableSet() ?: mutableSetOf()
         set.remove(word)
-        prefs.edit().putStringSet("words", set).apply()
+        val times = loadWordTimes().apply { remove(word) }
+        prefs.edit()
+            .putStringSet("words", set)
+            .putString("word_times", timesJson(times))
+            .apply()
     }
 
     fun isFavorite(word: String): Boolean {
@@ -449,9 +485,16 @@ class DictRepository(private val context: Context) {
     fun favoriteWords(): Set<String> =
         prefs.getStringSet("words", emptySet()) ?: emptySet()
 
-    /** 整体替换收藏词（用于同步解包/合并回写） */
+    /** 整体替换收藏词（用于同步解包/合并回写）；保留已有时间戳，新词以当前时间兜底。 */
     fun replaceFavorites(words: Collection<String>) {
-        prefs.edit().putStringSet("words", words.toSet()).apply()
+        val newSet = words.toSet()
+        val oldTimes = loadWordTimes()
+        val now = System.currentTimeMillis()
+        val newTimes = newSet.associateWith { oldTimes[it] ?: now }
+        prefs.edit()
+            .putStringSet("words", newSet)
+            .putString("word_times", timesJson(newTimes))
+            .apply()
     }
 
     // ---------- 查词历史 ----------

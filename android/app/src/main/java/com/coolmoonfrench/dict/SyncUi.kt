@@ -68,7 +68,7 @@ fun CloudLoginSection(
         Spacer(Modifier.height(12.dp))
 
         if (!loggedIn) {
-            OutlinedTextField(
+            SelectableOutlinedTextField(
                 value = account,
                 onValueChange = { account = it },
                 label = { Text("坚果云账号") },
@@ -76,7 +76,7 @@ fun CloudLoginSection(
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
+            SelectableOutlinedTextField(
                 value = pwd,
                 onValueChange = { pwd = it },
                 label = { Text("应用密码") },

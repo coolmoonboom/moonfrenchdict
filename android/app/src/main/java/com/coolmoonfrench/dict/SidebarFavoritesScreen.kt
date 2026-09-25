@@ -4,7 +4,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -149,16 +151,26 @@ private fun AIFavoritesTab(prefs: AIPreferences, onOpen: (Long) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun WordFavoritesTab(repository: DictRepository) {
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
+    var selectionMode by remember { mutableStateOf(false) }
+    val selected = remember { mutableStateListOf<String>() }
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞），同时刷新收藏（词书新增收藏后重进可见）
     LaunchedEffect(Unit) {
         Speech.ensureInitialized(context)
         wordFavs = repository.loadFavorites()
     }
+
+    fun exitSelection() {
+        selectionMode = false
+        selected.clear()
+    }
+
+    BackHandler(enabled = selectionMode) { exitSelection() }
 
     if (wordFavs.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -167,48 +179,102 @@ private fun WordFavoritesTab(repository: DictRepository) {
         return
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-    ) {
-        items(wordFavs) { entry ->
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 2.dp)
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 多选模式顶部操作条：全选 / 反选 / 移除 / 取消
+        if (selectionMode) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(entry.word, fontWeight = FontWeight.Medium, fontSize = 15.sp)
-                        Text(
-                            entry.meaning.take(60),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    IconButton(onClick = {
-                        Speech.ensureInitialized(context)
-                                    Speech.speakWithFeedback(context, entry.word)
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读 ${entry.word}", modifier = Modifier.size(16.dp))
-                    }
-                    IconButton(onClick = {
-                        val clip = ClipData.newPlainText("word", "${entry.word}\n${entry.meaning}")
-                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
-                    }) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
-                    }
-                    TextButton(onClick = {
-                        repository.removeFavorite(entry.word)
+                Text("已选 ${selected.size}/${wordFavs.size}", fontSize = 13.sp)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = {
+                    selected.clear()
+                    selected.addAll(wordFavs.map { it.word })
+                }) { Text("全选", fontSize = 13.sp) }
+                TextButton(onClick = {
+                    val all = wordFavs.map { it.word }
+                    val inverted = all.filterNot { selected.contains(it) }
+                    selected.clear()
+                    selected.addAll(inverted)
+                }) { Text("反选", fontSize = 13.sp) }
+                TextButton(
+                    onClick = {
+                        selected.toList().forEach { repository.removeFavorite(it) }
                         wordFavs = repository.loadFavorites()
-                    }) {
-                        Text("移除", fontSize = 12.sp)
+                        exitSelection()
+                    },
+                    enabled = selected.isNotEmpty()
+                ) { Text("移除", fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { exitSelection() }) { Text("取消", fontSize = 13.sp) }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            items(wordFavs, key = { it.word }) { entry ->
+                val isSelected = selected.contains(entry.word)
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp)
+                        .combinedClickable(
+                            onClick = {
+                                if (selectionMode) {
+                                    if (isSelected) selected.remove(entry.word)
+                                    else selected.add(entry.word)
+                                }
+                            },
+                            onLongClick = {
+                                if (!selectionMode) {
+                                    selectionMode = true
+                                    if (!selected.contains(entry.word)) selected.add(entry.word)
+                                }
+                            }
+                        )
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 多选模式：每词左侧出现勾选框
+                        if (selectionMode) {
+                            Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = { checked ->
+                                    if (checked) {
+                                        if (!selected.contains(entry.word)) selected.add(entry.word)
+                                    } else {
+                                        selected.remove(entry.word)
+                                    }
+                                }
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(entry.word, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                            Text(
+                                entry.meaning.take(60),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(onClick = {
+                            Speech.ensureInitialized(context)
+                            Speech.speakWithFeedback(context, entry.word)
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "朗读 ${entry.word}", modifier = Modifier.size(16.dp))
+                        }
+                        IconButton(onClick = {
+                            val clip = ClipData.newPlainText("word", "${entry.word}\n${entry.meaning}")
+                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
+                        }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
+                        }
                     }
                 }
             }

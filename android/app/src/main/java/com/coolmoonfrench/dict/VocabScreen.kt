@@ -49,7 +49,7 @@ private enum class VocabDir(val label: String) {
 /** 页面路由 */
 private sealed class VocabRoute {
     object Home : VocabRoute()
-    class WordList(val words: List<VocabEntry>, val title: String) : VocabRoute()
+    class WordList(val words: List<VocabEntry>, val title: String, val showFloatingToggle: Boolean = false) : VocabRoute()
     class Detail(val words: List<VocabEntry>, val index: Int, val listTitle: String) : VocabRoute()
     object ReviewDays : VocabRoute()
     class Quiz(val fixed: List<VocabEntry>?, val title: String, val startIndex: Int = 0) : VocabRoute()
@@ -136,7 +136,7 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
                     refresh++
                 },
                 onReview = { route = VocabRoute.ReviewDays },
-                onMastered = { words -> route = VocabRoute.WordList(words, "已掌握") },
+                onMastered = { words -> route = VocabRoute.WordList(words, "已掌握", true) },
                 onBack = onExit
             )
         }
@@ -157,7 +157,8 @@ fun VocabScreen(mode: Int, onExit: () -> Unit) {
                 title = r.title,
                 words = r.words,
                 onOpen = { i -> route = VocabRoute.Detail(r.words, i, r.title) },
-                onBack = { route = VocabRoute.Home }
+                onBack = { route = VocabRoute.Home },
+                showFloatingToggle = r.showFloatingToggle
             )
         }
 

@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -16,8 +17,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -49,7 +52,8 @@ import com.coolmoonfrench.dict.room.VideoTextRecord
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoImportScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onExtractSubtitles: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -74,6 +78,11 @@ fun VideoImportScreen(
     // 当前识别结果是否已收藏；以及收藏列表（用于展示/移除）
     var isFav by remember { mutableStateOf(false) }
     var favList by remember { mutableStateOf(prefs.loadVideoTextFavorites()) }
+
+    // 二级页面：收藏文字查看页 / 在线视频字幕历史 / 识别结果全文弹窗
+    var showFavViewer by remember { mutableStateOf(false) }
+    var showSubtitleSessions by remember { mutableStateOf(false) }
+    var showResultDialog by remember { mutableStateOf(false) }
 
     fun reloadFavorites() {
         favList = prefs.loadVideoTextFavorites()
@@ -253,6 +262,21 @@ fun VideoImportScreen(
         }
     }
 
+    // ---------- 二级页面：收藏文字查看 ----------
+    if (showFavViewer) {
+        VideoTextFavoritesScreen(prefs = prefs, onBack = {
+            showFavViewer = false
+            reloadFavorites()
+        })
+        return
+    }
+
+    // ---------- 二级页面：在线视频字幕历史 ----------
+    if (showSubtitleSessions) {
+        SubtitleSessionsScreen(prefs = prefs, onBack = { showSubtitleSessions = false })
+        return
+    }
+
     Scaffold(
         topBar = {
             Column(
@@ -426,6 +450,37 @@ fun VideoImportScreen(
                 }
             }
 
+            // ---------- 在线视频字幕 ----------
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("在线视频字幕", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(
+                        "无需选择文件：点下面的按钮后，App 会捕获系统内部播放的声音（非扬声器外放），用本地模型实时转成字幕显示在悬浮窗上。适合观看在线视频时使用。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { onExtractSubtitles() },
+                            enabled = !busy,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.Subtitles, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("提取在线视频字幕")
+                        }
+                        OutlinedButton(
+                            onClick = { showSubtitleSessions = true },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("字幕记录")
+                        }
+                    }
+                }
+            }
+
             // ---------- 开始识别 ----------
             if (selectedUri != null && !busy) {
                 Button(
@@ -498,6 +553,7 @@ fun VideoImportScreen(
                             fontSize = 16.sp,
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clickable { showResultDialog = true }
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
                                 .padding(12.dp)
                         )
@@ -515,63 +571,31 @@ fun VideoImportScreen(
                 }
             }
 
-            // ---------- 收藏的文字 ----------
-            if (favList.isNotEmpty()) {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("收藏的文字", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                            Spacer(Modifier.weight(1f))
-                            Text("${favList.size}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        favList.forEach { fav ->
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
-                                    .padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    fav.text,
-                                    fontSize = 14.sp,
-                                    maxLines = 4,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (fav.fileName.isNotBlank()) {
-                                    Text(
-                                        "来源：${fav.fileName}",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    IconButton(onClick = {
-                                        val clip = ClipData.newPlainText("video_text", fav.text)
-                                        (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                                            .setPrimaryClip(clip)
-                                    }) {
-                                        Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
-                                    }
-                                    TextButton(onClick = {
-                                        prefs.removeVideoTextFavorite(fav.text)
-                                        reloadFavorites()
-                                    }) {
-                                        Text("移除", fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
+            // ---------- 收藏的文字（改为按钮进入独立查看页，释放主界面空间） ----------
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("收藏的文字", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text(
+                        "查看已收藏的识别文本与字幕，点击条目可查看全文",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = { showFavViewer = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Filled.Star, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("收藏的文字（${favList.size}）")
                     }
                 }
             }
         }
+    }
+
+    // ---------- 识别结果全文弹窗 ----------
+    if (showResultDialog && resultText.isNotEmpty()) {
+        FullTextDialog(text = resultText, title = "识别结果", onDismiss = { showResultDialog = false })
     }
 
     // ---------- 卸载大模型确认弹窗 ----------

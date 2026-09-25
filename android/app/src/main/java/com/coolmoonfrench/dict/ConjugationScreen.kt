@@ -242,7 +242,7 @@ fun ConjugationScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OutlinedTextField(
+            SelectableOutlinedTextField(
                 value = query,
                 onValueChange = { onQueryChange(it) },
                 modifier = Modifier.weight(1f),

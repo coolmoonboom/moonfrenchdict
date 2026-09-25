@@ -300,7 +300,7 @@ fun SentenceScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
+        SelectableOutlinedTextField(
             value = sentence,
             onValueChange = { sentence = it },
             modifier = Modifier
@@ -393,6 +393,28 @@ fun SentenceScreen(
                                     fontSize = 11.sp
                                 )
                                 Spacer(Modifier.weight(1f))
+                                if (aiPrefs != null) {
+                                    IconButton(
+                                        onClick = {
+                                            if (favorited) {
+                                                aiPrefs.removeSentenceFavorite(searchSentence)
+                                                favorited = false
+                                            } else {
+                                                aiPrefs.addSentenceFavorite(searchSentence, sentenceTranslation ?: sentence)
+                                                favorited = true
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            if (favorited) Icons.Filled.Star else Icons.Filled.StarBorder,
+                                            contentDescription = "收藏句子",
+                                            tint = if (favorited) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
                                 IconButton(
                                     onClick = {
                                         Speech.ensureInitialized(context)

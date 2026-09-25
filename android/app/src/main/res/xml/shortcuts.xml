@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="extract_subtitles"
+        android:shortcutLongLabel="@string/shortcut_extract_subtitles_long"
+        android:shortcutShortLabel="@string/shortcut_extract_subtitles_short">
+        <intent
+            android:action="com.coolmoonfrench.dict.action.EXTRACT_SUBTITLES"
+            android:targetClass="com.coolmoonfrench.dict.MainActivity"
+            android:targetPackage="com.coolmoonfrench.dict" />
+    </shortcut>
+</shortcuts>

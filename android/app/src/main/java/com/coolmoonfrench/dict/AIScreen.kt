@@ -541,7 +541,7 @@ fun AIScreen(
                         .navigationBarsPadding(),
                     verticalAlignment = Alignment.Bottom
                 ) {
-                    OutlinedTextField(
+                    SelectableOutlinedTextField(
                         value = input,
                         onValueChange = { input = it },
                         modifier = Modifier.weight(1f),

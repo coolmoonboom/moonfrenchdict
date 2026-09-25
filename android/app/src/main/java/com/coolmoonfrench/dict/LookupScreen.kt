@@ -273,7 +273,7 @@ fun LookupScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        OutlinedTextField(
+        SelectableOutlinedTextField(
             value = query,
             onValueChange = { doSearch(it) },
             modifier = Modifier

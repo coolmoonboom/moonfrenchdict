@@ -1,5 +1,6 @@
 package com.coolmoonfrench.dict
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,13 +20,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** 待学习 / 待复习单词列表：左发音、中单词+音标、右进入详情 */
+/** 待学习 / 待复习单词列表：左发音、中单词+音标、右进入详情；已掌握列表额外显示悬浮窗开关 */
 @Composable
 fun VocabListScreen(
     title: String,
     words: List<VocabEntry>,
     onOpen: (Int) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    showFloatingToggle: Boolean = false
 ) {
     val context = LocalContext.current
     BackHandler { onBack() }
@@ -100,6 +102,30 @@ fun VocabListScreen(
                         }
                     }
 
+                    if (showFloatingToggle) {
+                        // 悬浮窗开关：点击把该词加入悬浮窗队列并常驻屏幕
+                        Switch(
+                            checked = FloatingWindowState.visible && FloatingWindowState.isInQueue(e.word),
+                            onCheckedChange = { checked ->
+                                if (checked) {
+                                    if (FloatingWindowControl.overlayPermissionGranted(context)) {
+                                        FloatingWindowControl.add(context, e)
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            "需要悬浮窗权限，请在系统设置中允许「酷月法语」显示在其他应用上层",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                        FloatingWindowControl.requestPermission(context)
+                                    }
+                                } else {
+                                    FloatingWindowControl.remove(context, e.word)
+                                }
+                            },
+                            modifier = Modifier.scaleSwitchSize()
+                        )
+                    }
+
                     IconButton(onClick = { onOpen(i) }) {
                         Icon(
                             Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -113,3 +139,7 @@ fun VocabListScreen(
         }
     }
 }
+
+/** 紧凑开关尺寸：悬浮窗开关保持行高一致，不放大可点击热区。 */
+private fun Modifier.scaleSwitchSize(): Modifier =
+    this.padding(horizontal = 2.dp)
