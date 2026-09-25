@@ -83,6 +83,8 @@ POS_PREFIX = re.compile(
     re.I)
 LEAD_MARK = re.compile(r'^\s*(?:[Iil1]+\.\s*)+')
 MID_MARK = re.compile(r'(?<=[\s,，、；;])[Iil1]+\.\s*')
+# 动变元语言释义（source 词典把 devoirs/va 等变位形式标成名词，释义为「…第X人称…现在式」）
+META = re.compile(r'第?[一二三1-3]?人[称成](?:单|复)?数|现在式|愈过去|先过去|简单过去|未完成过去|变位式')
 
 
 def _strip_noise(zh: str) -> str:
@@ -94,24 +96,82 @@ def _strip_noise(zh: str) -> str:
     s = LEAD_MARK.sub('', s)
     s = MID_MARK.sub(' ', s)
     s = POS_TOK.sub(' ', s)
+    # 「…阴森森的2.阴森的」义项编号紧贴中文尾部 -> 转为分隔
+    s = re.sub(r'(?<=[\u4e00-\u9fff。])\s*\d+[.．]\s*', '，', s)
+    # 中文与拉丁词直接粘连（「解剖病理学anatomopathologist」）-> 切开便于段级清洗
+    s = re.sub(r'(?<=[\u4e00-\u9fff])(?=[a-zA-Zà-öø-ÿ]{2,})', ' ', s)
+    s = re.sub(r'([a-zA-Zà-öø-ÿ]{2,})[.,.;，。]?\s*(?=[\u4e00-\u9fff])', r'\1 ', s)
     return re.sub(r'\s+', ' ', s).strip(' ,;，；、:：。.')
 
 
-def clean_meaning(zh: str) -> str:
-    if not zh:
-        return ""
-    s = re.split(r'[;；]', _strip_noise(zh))[0]
-    parts = [p.strip(' ,.。:：') for p in re.split(r'[,，、\s]+', s)]
-    seen = set()
-    uniq = []
-    for p in parts:
+def _clean_segment(p: str) -> str:
+    """单个逗号级片段：去掉开头的「的/地/得」残缺、词组示例段、英文段；返回 '' 表示弃。"""
+    s = p.strip(' ,.。:：')
+    # 「到，的第一人称…」这类以结构助词开头的碎段
+    while s and s[0] in '的地得':
+        s = s[1:].lstrip()
+    s = s.strip(' ,.。:：')
+    if not s:
+        return ''
+    # 词组/示例段（se ~ / de ~/ pl. ~x 等）
+    if '~' in s:
+        return ''
+    # 纯拉丁段（同义英文/衍生同形词，如 anatomopathologist）
+    if not CJK.search(s) and re.search(r'[a-zA-Zà-öø-ÿœæ]{4,}', s):
+        return ''
+    return s
+
+
+def _fmt_meaning(segs):
+    seen, uniq = set(), []
+    for p in segs:
         if p and p not in seen:
             seen.add(p)
             uniq.append(p)
-    out = '，'.join(uniq[:2]) if uniq else ''
-    if len(out) > 30:
-        out = out[:30]
-    return out
+    out, n = '', 0
+    for p in uniq:
+        if n >= 2:
+            break  # 简注风格：最多两个片段
+        cand = p if not out else out + '，' + p
+        if len(cand) > 30:
+            break  # 只在片段边界截断，不拦腰切词
+        out = cand
+        n += 1
+    return out[:30]
+
+
+def _sense_ok(s: str) -> bool:
+    if not s or '…' in s:
+        return False
+    if len(CJK.findall(s)) == 0:
+        return False
+    if META.search(s):
+        return False
+    return True
+
+
+def clean_meaning(zh: str) -> str:
+    """按 分号义项 > 逗号片段 分层择优：跳过省略号/元语言/词组示例/残缺段，
+    首义过简（单个汉字）时并入第二义项补充信息；输出最多两段的简注。"""
+    if not zh:
+        return ""
+    senses = []
+    for raw in re.split(r'[;；]', _strip_noise(zh)):
+        segs = []
+        for p in re.split(r'[,，、:：\s]+', raw):
+            c = _clean_segment(p)
+            if c and not META.search(c):
+                segs.append(c)
+        if not segs:
+            continue
+        s = '，'.join(dict.fromkeys(segs))
+        if _sense_ok(s) and s not in senses:
+            senses.append(s)
+    if not senses:
+        return ""
+    if len(CJK.findall(senses[0])) <= 1 and len(senses) > 1:
+        return _fmt_meaning(senses[0].split('，') + senses[1].split('，'))
+    return _fmt_meaning(senses[0].split('，'))
 
 
 def valid_meaning(m: str) -> bool:
@@ -203,6 +263,12 @@ def main():
             if not WORD_RE.match(w):
                 continue
             if ending_filter and not w.endswith(INFINITIVE_END):
+                continue
+            # 变位元语言条目混入（devons=「devoir 的第一人称复数现在式 nous devons」）：
+            # 释义含变位描述且原样出现本词才剔除，避免误删含短语/术语的正常词条
+            if zh and len(w) >= 3 and META.search(zh.lower()) and re.search(
+                    r"(?<![a-zà-öø-ÿ'])" + re.escape(w) + r"(?![a-zà-öø-ÿ'])",
+                    zh.lower()):
                 continue
             good = valid_meaning(clean_meaning(zh))
             prev = out.get(w)
