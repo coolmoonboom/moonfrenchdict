@@ -66,15 +66,34 @@ class MainActivity : ComponentActivity() {
     private lateinit var morphology: MorphologyAnalyzer
     private lateinit var aiPrefs: AIPreferences
 
+    /** 字幕授权弹窗返回时会触发 onResume，此标志用于避免刚启动的字幕悬浮窗被立刻关闭。 */
+    private var suppressFloatingAutoClose = false
+
     /** MediaProjection 授权回调：成功后启动字幕捕获前台服务。 */
     private val projectionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val data = result.data
         if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
+            suppressFloatingAutoClose = true
             SubtitleCaptureService.start(this, result.resultCode, data)
         } else {
             Toast.makeText(this, "已取消系统音频捕获授权", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 回到 App 时自动关闭悬浮窗（词卡 / 字幕）。 */
+    override fun onResume() {
+        super.onResume()
+        if (suppressFloatingAutoClose) {
+            suppressFloatingAutoClose = false
+            return
+        }
+        if (FloatingWindowState.visible) {
+            when (FloatingWindowState.mode) {
+                FloatingMode.WORD -> FloatingWindowControl.stop(this)
+                FloatingMode.SUBTITLE -> SubtitleCaptureService.stop(this)
+            }
         }
     }
 

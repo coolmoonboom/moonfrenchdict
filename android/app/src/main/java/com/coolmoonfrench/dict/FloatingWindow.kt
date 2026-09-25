@@ -21,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +33,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -40,6 +42,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
@@ -100,6 +105,9 @@ object FloatingWindowState {
     /** 列表循环：按队列顺序「单词→例句」滚动播报，播完自动切下一词（已掌握列表循环用）。 */
     var listLoop by androidx.compose.runtime.mutableStateOf(false)
 
+    /** 词卡模式：是否暂停播报（暂停播放按钮）。 */
+    var paused by androidx.compose.runtime.mutableStateOf(false)
+
     /** 悬浮窗当前模式 */
     var mode by androidx.compose.runtime.mutableStateOf(FloatingMode.WORD)
 
@@ -152,6 +160,7 @@ object FloatingWindowControl {
             FloatingWindowState.visible = true
             FloatingWindowState.loopOne = false
             FloatingWindowState.listLoop = false
+            FloatingWindowState.paused = false
             context.startService(Intent(context, FloatingWindowService::class.java))
         }
         val i = FloatingWindowState.queue.indexOfFirst { it.word == entry.word }
@@ -175,6 +184,7 @@ object FloatingWindowControl {
         FloatingWindowState.index = startIndex.coerceIn(0, words.size - 1)
         FloatingWindowState.loopOne = false
         FloatingWindowState.listLoop = true
+        FloatingWindowState.paused = false
         FloatingWindowState.visible = true
         runCatching {
             context.startService(Intent(context, FloatingWindowService::class.java))
@@ -185,6 +195,7 @@ object FloatingWindowControl {
     fun stopListLoop() {
         FloatingWindowState.listLoop = false
         FloatingWindowState.loopOne = false
+        FloatingWindowState.paused = false
         Espeak.stop()
     }
 
@@ -210,6 +221,7 @@ object FloatingWindowControl {
         FloatingWindowState.queue.clear()
         FloatingWindowState.loopOne = false
         FloatingWindowState.listLoop = false
+        FloatingWindowState.paused = false
         runCatching {
             context.stopService(Intent(context, FloatingWindowService::class.java))
         }
@@ -268,6 +280,10 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     private var overlay: ComposeView? = null
     private var params: WindowManager.LayoutParams? = null
 
+    // 拖动时的浮点余量累积：指针小位移不会因 toInt() 截断而丢失，避免拖动一顿一顿。
+    private var pendingDx = 0f
+    private var pendingDy = 0f
+
     // 悬浮窗的 ComposeView 不隶属于任何 Activity，必须自备 Lifecycle/ViewModelStore/SavedState，
     // 否则 Compose 在 onAttachedToWindow 时找不到 ViewTreeLifecycleOwner 会直接崩溃。
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -291,8 +307,15 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     fun moveBy(dx: Float, dy: Float) {
         val p = params ?: return
         val v = overlay ?: return
-        p.x += dx.toInt()
-        p.y += dy.toInt()
+        pendingDx += dx
+        pendingDy += dy
+        val ix = pendingDx.toInt()
+        val iy = pendingDy.toInt()
+        if (ix == 0 && iy == 0) return
+        pendingDx -= ix
+        pendingDy -= iy
+        p.x += ix
+        p.y += iy
         runCatching { wm.updateViewLayout(v, p) }
     }
 
@@ -358,20 +381,20 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     private fun showOverlay() {
         if (overlay != null) return
         val point = Point().also { wm.defaultDisplay.getRealSize(it) }
-        val width = (point.x * 0.92f).toInt()
         val type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         val layoutFlags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        // 窗口宽高都自适应内容：背景透明后，窗口外框紧贴文字与控件，不会挡住底层应用。
         val p = WindowManager.LayoutParams(
-            width,
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
             layoutFlags,
             PixelFormat.TRANSLUCENT
         )
         p.gravity = Gravity.TOP or Gravity.START
-        p.x = (point.x - width) / 2
-        p.y = (point.y * 0.08f).toInt()
+        p.x = (point.x * 0.06f).toInt()
+        p.y = (point.y * 0.10f).toInt()
         params = p
 
         val view = ComposeView(this).apply {
@@ -419,31 +442,16 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         }
     }
 
-    // 锁定 / 锁图标 / 设置面板（悬浮窗局部状态，服务重启即复位）
+    // 锁定状态 / 设置面板（悬浮窗局部状态，服务重启即复位）
     var locked by remember { mutableStateOf(false) }
-    var lockIconVisible by remember { mutableStateOf(false) }
     var settingsVisible by remember { mutableStateOf(false) }
     var tapTimes by remember { mutableStateOf<MutableList<Long>>(mutableListOf()) }
     val scope = rememberCoroutineScope()
 
-    fun handleTap() {
-        if (locked) {
-            val now = System.currentTimeMillis()
-            tapTimes = (tapTimes + now).filter { now - it <= 700 }.toMutableList()
-            if (tapTimes.size >= 3) {
-                locked = false
-                lockIconVisible = false
-                tapTimes = mutableListOf()
-            }
-        } else {
-            lockIconVisible = !lockIconVisible
-        }
-    }
-
     // 朗读：切词自动播一次「单词→例句」；单句循环则反复播当前词；
     // 列表循环则播完自动切下一词（切词会重启本效果继续播，形成连续循环）。
-    LaunchedEffect(word, FloatingWindowState.loopOne, FloatingWindowState.listLoop) {
-        if (word.isEmpty()) return@LaunchedEffect
+    LaunchedEffect(word, FloatingWindowState.loopOne, FloatingWindowState.listLoop, FloatingWindowState.paused) {
+        if (word.isEmpty() || FloatingWindowState.paused) return@LaunchedEffect
         while (true) {
             Espeak.speakAwait(word, deterministic = true)
             val ex = withContext(Dispatchers.IO) { VocabExamples.lookup(context, word) }
@@ -460,23 +468,14 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxWidth().padding(4.dp)) {
-        // 主卡片：单词 + 例句 + 底部控制
+    Box(modifier = Modifier.widthIn(max = 330.dp).padding(4.dp)) {
+        // 主卡片：透明背景（仅文字与控件可见）+ 尺寸自适应内容
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant,
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .padding(horizontal = 14.dp, vertical = 10.dp)
-                // 整卡手势：拖动（未锁定）/ 单击（锁图标/三击解锁）/ 长按（设置面板）
-                .pointerInput(Unit) {
+                .widthIn(min = 180.dp, max = 330.dp)
+                .padding(horizontal = 6.dp, vertical = 6.dp)
+                // 整卡手势：拖动（未锁定）/ 长按（设置面板）/ 三击关闭
+                .pointerInput(locked) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var dragging = false
@@ -487,7 +486,6 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                             if (!dragging) {
                                 longFired = true
                                 settingsVisible = !settingsVisible
-                                lockIconVisible = false
                             }
                         }
                         while (true) {
@@ -515,7 +513,15 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                                 }
                                 PointerEventType.Release -> {
                                     val consumed = event.changes.any { it.isConsumed }
-                                    if (!dragging && !longFired && !consumed) handleTap()
+                                    if (!dragging && !longFired && !consumed) {
+                                        val now = System.currentTimeMillis()
+                                        tapTimes = (tapTimes + now)
+                                            .filter { now - it <= 900 }.toMutableList()
+                                        if (tapTimes.size >= 3) {
+                                            tapTimes = mutableListOf()
+                                            FloatingWindowControl.stop(context)
+                                        }
+                                    }
                                     longPressJob.cancel()
                                     break
                                 }
@@ -582,34 +588,30 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                 color = MaterialTheme.colorScheme.outlineVariant
             )
 
-            // 底部控制：锁图标（左下） + 上一句 / 下一句 / 单句循环（中央）
+            // 底部控制：锁（左下） + 上一句 / 暂停播放 / 下一句 / 单句循环
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 锁图标：单击窗口后出现；点它锁定位置；锁定中显示实心锁
-                if (lockIconVisible) {
-                    IconButton(onClick = {
-                        locked = true
-                        lockIconVisible = false
-                    }, modifier = Modifier.size(30.dp)) {
-                        Icon(
-                            Icons.Filled.Lock,
-                            contentDescription = "锁定位置",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                } else if (locked) {
+                // 左下角常驻锁：未锁定时为开锁图标，单击锁定、长按解锁；锁定后不可拖动
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .pointerInput(locked) {
+                            detectTapGestures(
+                                onTap = { locked = true },
+                                onLongPress = { locked = false }
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
-                        Icons.Filled.Lock,
-                        contentDescription = "已锁定（三击解锁）",
-                        tint = MaterialTheme.colorScheme.outline,
-                        modifier = Modifier.size(16.dp).padding(start = 16.dp)
+                        if (locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                        contentDescription = if (locked) "已锁定（长按解锁）" else "未锁定（单击锁定）",
+                        tint = if (locked) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
                     )
-                }
-                if (lockIconVisible || locked) {
-                    Spacer(Modifier.width(8.dp))
                 }
                 Spacer(Modifier.weight(1f))
 
@@ -622,6 +624,20 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                         contentDescription = "上一句",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(20.dp)
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        FloatingWindowState.paused = !FloatingWindowState.paused
+                        if (FloatingWindowState.paused) Espeak.stop()
+                    },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        if (FloatingWindowState.paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                        contentDescription = if (FloatingWindowState.paused) "播放" else "暂停",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp)
                     )
                 }
                 IconButton(
@@ -652,11 +668,11 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         }
 
         // 长按弹出的设置面板：翻译开关 / 语速 / 字号 / 关闭
+        // 说明：面板参与窗口测量（不再用 matchParentSize 覆盖裁剪），窗口会随之变高，保证语速/字号完整可见。
         if (settingsVisible) {
             Box(
                 modifier = Modifier
-                    .matchParentSize()
-                    .padding(top = 40.dp, end = 8.dp, start = 8.dp, bottom = 8.dp),
+                    .padding(top = 8.dp, end = 8.dp, start = 8.dp, bottom = 8.dp),
                 contentAlignment = Alignment.TopEnd
             ) {
                 Surface(
@@ -767,20 +783,44 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
         }
     }
 
+    var tapTimes by remember { mutableStateOf<MutableList<Long>>(mutableListOf()) }
+
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .widthIn(min = 200.dp, max = 380.dp)
             .padding(4.dp)
-            .background(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                shape = RoundedCornerShape(16.dp)
-            )
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
-                shape = RoundedCornerShape(16.dp)
-            )
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+            // 整个窗口三击关闭（字幕窗口无锁，直接关闭）
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var moved = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        when (event.type) {
+                            PointerEventType.Move -> {
+                                if (abs(change.position.x - down.position.x) > 24f ||
+                                    abs(change.position.y - down.position.y) > 24f
+                                ) moved = true
+                            }
+                            PointerEventType.Release -> {
+                                if (!moved && !event.changes.any { it.isConsumed }) {
+                                    val now = System.currentTimeMillis()
+                                    tapTimes = (tapTimes + now)
+                                        .filter { now - it <= 900 }.toMutableList()
+                                    if (tapTimes.size >= 3) {
+                                        tapTimes = mutableListOf()
+                                        SubtitleCaptureService.stop(context)
+                                    }
+                                }
+                                break
+                            }
+                            else -> Unit
+                        }
+                    }
+                }
+            }
     ) {
         // 顶部标题栏：拖动移动悬浮窗；右上角关闭
         Row(
