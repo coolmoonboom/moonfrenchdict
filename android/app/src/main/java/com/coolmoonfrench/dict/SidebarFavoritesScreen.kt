@@ -228,7 +228,7 @@ private fun WordFavoritesTab(repository: DictRepository) {
                             FloatingWindowControl.requestPermission(context)
                             return@TextButton
                         }
-                        FloatingWindowControl.startListLoop(context, picked, 0)
+                        FloatingWindowControl.startListLoop(context, picked, 0, revealMeaning = true)
                         exitSelection()
                     },
                     enabled = selected.isNotEmpty()

@@ -995,7 +995,7 @@ private fun VocabQuizScreen(
                         OutlinedButton(
                             onClick = {
                                 if (fav) repository.removeFavorite(current.target.word)
-                                else repository.addFavorite(current.target.word)
+                                else repository.addFavorite(current.target.word, current.target.meaning)
                                 fav = !fav
                             },
                             modifier = Modifier.weight(1f).height(46.dp)

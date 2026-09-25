@@ -58,12 +58,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -89,6 +89,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -108,6 +109,9 @@ object FloatingWindowState {
 
     /** 词卡模式：是否暂停播报（暂停播放按钮）。 */
     var paused by androidx.compose.runtime.mutableStateOf(false)
+
+    /** 词卡模式：是否显示/朗读中文释义（收藏词播放为 true；已掌握列表默认为 false，避免剧透）。 */
+    var revealMeaning by androidx.compose.runtime.mutableStateOf(false)
 
     /** 悬浮窗当前模式 */
     var mode by androidx.compose.runtime.mutableStateOf(FloatingMode.WORD)
@@ -162,6 +166,7 @@ object FloatingWindowControl {
             FloatingWindowState.loopOne = false
             FloatingWindowState.listLoop = false
             FloatingWindowState.paused = false
+            FloatingWindowState.revealMeaning = false
             context.startService(Intent(context, FloatingWindowService::class.java))
         }
         val i = FloatingWindowState.queue.indexOfFirst { it.word == entry.word }
@@ -177,7 +182,7 @@ object FloatingWindowControl {
      * 开启「已掌握列表循环」：把整份列表作为悬浮窗队列，从 startIndex 起按顺序
      * 「单词→例句」播报并自动切下一词，悬浮窗同步显示当前词卡。
      */
-    fun startListLoop(context: Context, words: List<VocabEntry>, startIndex: Int) {
+    fun startListLoop(context: Context, words: List<VocabEntry>, startIndex: Int, revealMeaning: Boolean = false) {
         if (words.isEmpty()) return
         FloatingWindowState.mode = FloatingMode.WORD
         FloatingWindowState.queue.clear()
@@ -186,6 +191,7 @@ object FloatingWindowControl {
         FloatingWindowState.loopOne = false
         FloatingWindowState.listLoop = true
         FloatingWindowState.paused = false
+        FloatingWindowState.revealMeaning = revealMeaning
         FloatingWindowState.visible = true
         runCatching {
             context.startService(Intent(context, FloatingWindowService::class.java))
@@ -197,7 +203,9 @@ object FloatingWindowControl {
         FloatingWindowState.listLoop = false
         FloatingWindowState.loopOne = false
         FloatingWindowState.paused = false
+        FloatingWindowState.revealMeaning = false
         Espeak.stop()
+        ChineseTts.stop()
     }
 
     /** 从队列移除词；队列清空则停止服务。 */
@@ -281,10 +289,6 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     private var overlay: ComposeView? = null
     private var params: WindowManager.LayoutParams? = null
 
-    // 拖动时的浮点余量累积：指针小位移不会因 toInt() 截断而丢失，避免拖动一顿一顿。
-    private var pendingDx = 0f
-    private var pendingDy = 0f
-
     // 悬浮窗的 ComposeView 不隶属于任何 Activity，必须自备 Lifecycle/ViewModelStore/SavedState，
     // 否则 Compose 在 onAttachedToWindow 时找不到 ViewTreeLifecycleOwner 会直接崩溃。
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -304,19 +308,22 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
     }
 
-    /** 移动悬浮窗（拖动时由 Compose 手势回调）。 */
-    fun moveBy(dx: Float, dy: Float) {
+    /** 悬浮窗当前左上角坐标（`p.gravity = TOP or START`，x/y 即屏幕像素偏移）。 */
+    fun windowX(): Int = params?.x ?: 0
+    fun windowY(): Int = params?.y ?: 0
+
+    /**
+     * 把悬浮窗移动到绝对坐标。
+     *
+     * 拖动时不能用「本帧局部位移」累加：窗口会随手指移动，下一帧指针的局部坐标随即
+     * 相对新窗口位置回退，于是窗口永远追不上手指（不跟手），并周期性补偿造成抖动。
+     * 用绝对定位（当前窗口位置 + 相对按下点的位移）即可消除该反馈。
+     */
+    fun moveTo(x: Float, y: Float) {
         val p = params ?: return
         val v = overlay ?: return
-        pendingDx += dx
-        pendingDy += dy
-        val ix = pendingDx.toInt()
-        val iy = pendingDy.toInt()
-        if (ix == 0 && iy == 0) return
-        pendingDx -= ix
-        pendingDy -= iy
-        p.x += ix
-        p.y += iy
+        p.x = x.toInt()
+        p.y = y.toInt()
         runCatching { wm.updateViewLayout(v, p) }
     }
 
@@ -417,6 +424,7 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
 
     override fun onDestroy() {
         Espeak.stop()
+        ChineseTts.stop()
         overlay?.let { runCatching { wm.removeView(it) } }
         overlay = null
         FloatingWindowState.visible = false
@@ -451,12 +459,21 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
 
     // 朗读：切词自动播一次「单词→例句」；单句循环则反复播当前词；
     // 列表循环则播完自动切下一词（切词会重启本效果继续播，形成连续循环）。
-    LaunchedEffect(word, FloatingWindowState.loopOne, FloatingWindowState.listLoop, FloatingWindowState.paused) {
+    // 收藏词（revealMeaning）无本地例句时，改读该词的中文释义。
+    LaunchedEffect(word, FloatingWindowState.loopOne, FloatingWindowState.listLoop, FloatingWindowState.paused, FloatingWindowState.revealMeaning) {
         if (word.isEmpty() || FloatingWindowState.paused) return@LaunchedEffect
         while (true) {
             Espeak.speakAwait(word, deterministic = true)
             val ex = withContext(Dispatchers.IO) { VocabExamples.lookup(context, word) }
-            if (ex != null) Espeak.speakAwait(ex.fr)
+            if (ex != null) {
+                Espeak.speakAwait(ex.fr)
+            } else if (FloatingWindowState.revealMeaning) {
+                val meaning = FloatingWindowState.current()?.meaning.orEmpty()
+                if (meaning.isNotBlank()) {
+                    ChineseTts.ensureInitialized(context)
+                    ChineseTts.speakAwait(meaning)
+                }
+            }
             if (FloatingWindowState.loopOne) continue
             if (FloatingWindowState.listLoop) {
                 val before = FloatingWindowState.current()?.word
@@ -481,7 +498,6 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var dragging = false
                         var longFired = false
-                        var lastPos = down.position
                         val longPressJob = scope.launch {
                             delay(500)
                             if (!dragging) {
@@ -497,7 +513,6 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                             when (event.type) {
                                 PointerEventType.Move -> {
                                     if (!locked && !longFired) {
-                                        val delta = change.position - lastPos
                                         val total = change.position - down.position
                                         if (!dragging &&
                                             (abs(total.x) > 8f || abs(total.y) > 8f)
@@ -507,10 +522,12 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                                         }
                                         if (dragging) {
                                             change.consume()
-                                            service.moveBy(delta.x, delta.y)
+                                            service.moveTo(
+                                                service.windowX() + (change.position.x - down.position.x),
+                                                service.windowY() + (change.position.y - down.position.y)
+                                            )
                                         }
                                     }
-                                    lastPos = change.position
                                 }
                                 PointerEventType.Release -> {
                                     val consumed = event.changes.any { it.isConsumed }
@@ -584,6 +601,17 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                         )
                     }
                 }
+                if (FloatingWindowState.revealMeaning) {
+                    val meaning = entry?.meaning.orEmpty()
+                    if (meaning.isNotBlank()) {
+                        Text(
+                            text = meaning,
+                            fontSize = (13 * settings.floatFontScale).sp,
+                            lineHeight = 18.sp,
+                            color = Color.White.copy(alpha = 0.9f)
+                        )
+                    }
+                }
             }
 
             // 底部控制：锁（左下） + 上一句 / 暂停播放 / 下一句 / 单句循环
@@ -631,7 +659,10 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                 IconButton(
                     onClick = {
                         FloatingWindowState.paused = !FloatingWindowState.paused
-                        if (FloatingWindowState.paused) Espeak.stop()
+                        if (FloatingWindowState.paused) {
+                            Espeak.stop()
+                            ChineseTts.stop()
+                        }
                     },
                     modifier = Modifier.size(40.dp)
                 ) {
@@ -777,10 +808,20 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
     val partial = FloatingWindowState.subtitlePartial
     val listState = rememberLazyListState()
 
-    val atBottom by remember { derivedStateOf { !listState.canScrollForward } }
+    // 是否跟随最新一句：仅当用户没有上滑回看时才自动滚到底部。
+    // 不能直接用 canScrollForward 判断「已到底」，因为新追加一句后它会立刻变为可前滚，
+    // 于是自动跟随永远失效。改为观察「最后一项是否可见」，并留 1 项容差吸收追加造成的瞬时偏移。
+    var followTail by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+            info.totalItemsCount == 0 || last >= info.totalItemsCount - 2
+        }.collect { followTail = it }
+    }
     LaunchedEffect(lines.size, partial) {
         val total = lines.size + if (partial.isNotEmpty()) 1 else 0
-        if (total > 0 && atBottom) {
+        if (total > 0 && followTail) {
             listState.animateScrollToItem(total - 1)
         }
     }
@@ -834,21 +875,22 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var dragging = false
-                        var lastPos = down.position
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             when (event.type) {
                                 PointerEventType.Move -> {
-                                    val delta = change.position - lastPos
-                                    if (!dragging && (abs(delta.x) > 4f || abs(delta.y) > 4f)) {
+                                    val total = change.position - down.position
+                                    if (!dragging && (abs(total.x) > 4f || abs(total.y) > 4f)) {
                                         dragging = true
                                     }
                                     if (dragging) {
                                         change.consume()
-                                        service.moveBy(delta.x, delta.y)
+                                        service.moveTo(
+                                            service.windowX() + (change.position.x - down.position.x),
+                                            service.windowY() + (change.position.y - down.position.y)
+                                        )
                                     }
-                                    lastPos = change.position
                                 }
                                 PointerEventType.Release -> break
                                 else -> Unit

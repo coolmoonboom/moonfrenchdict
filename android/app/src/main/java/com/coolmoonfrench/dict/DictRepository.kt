@@ -147,27 +147,35 @@ class DictRepository(private val context: Context) {
     }
 
     /**
-     * 首次启动时把 assets 中的预构建 dictionary.db 拷贝到应用数据库目录。
-     * 预构建库已含 dict 表与 3-gram 索引，无需运行时解析/导入。
-     * 若已存在旧版库（缺 dict_ngram 表或结构不兼容），删除后重新拷贝。
+     * 确保 assets 中的预构建 dictionary.db 已拷贝到应用数据库目录，并保持为「当前随包版本」。
+     *
+     * 只要设备上已有旧版本词典（例如早期安装遗留、词条缺少重音符号），且未做版本标记，
+     * 就删除旧库重新拷贝，保证显示的词条与本 APK 内置词典一致。
      */
     private fun ensureDatabase() {
         try {
             val dbFile = context.getDatabasePath(DB_NAME)
-            if (dbFile.exists()) {
-                // 校验旧库是否为预构建版本（含 dict_ngram 表）；否则删除重拷
-                val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
+            val prefs = context.getSharedPreferences("dict_db_meta", Context.MODE_PRIVATE)
+            val appliedVersion = prefs.getInt("bundled_version", 0)
+            val valid = dbFile.exists() && runCatching {
+                val db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
                 val hasNgram = db.rawQuery(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dict_ngram'", null
                 ).use { it.moveToFirst() }
                 db.close()
-                if (hasNgram) return
-                dbFile.delete()
-            }
+                hasNgram
+            }.getOrDefault(false)
+            if (valid && appliedVersion >= BUNDLED_DB_VERSION) return
+
+            if (dbFile.exists()) dbFile.delete()
+            // 旧库的 WAL/SHM 残留一并清理，避免打开到过期页
+            java.io.File(dbFile.path + "-wal").delete()
+            java.io.File(dbFile.path + "-shm").delete()
             dbFile.parentFile?.mkdirs()
             context.assets.open("dictionary.db").use { input ->
                 dbFile.outputStream().use { output -> input.copyTo(output) }
             }
+            prefs.edit().putInt("bundled_version", BUNDLED_DB_VERSION).apply()
         } catch (_: Exception) {
             // assets 拷贝失败时回退：允许空库，查询返回空
         }
@@ -419,6 +427,7 @@ class DictRepository(private val context: Context) {
 
     fun loadFavorites(): List<DictEntry> {
         val times = loadWordTimes()
+        val meanings = loadMeanings()
         return favoriteWords()
             .mapNotNull { word ->
                 val entry = lookupExact(word).firstOrNull()
@@ -431,7 +440,18 @@ class DictRepository(private val context: Context) {
                             meaning = v.meaning
                         )
                     }
-                entry?.let { it to (times[word] ?: 0L) }
+                    ?: meanings[word]?.takeIf { it.isNotBlank() }?.let { m ->
+                        DictEntry(word = word, pos = "", zh = m, en = "", meaning = m)
+                    }
+                // 词典/词书命中但释义为空时，用收藏时记录的中文兜底
+                val filled = entry?.let { e ->
+                    if (e.meaning.isBlank() && !meanings[word].isNullOrBlank()) {
+                        e.copy(meaning = meanings[word].orEmpty(), zh = meanings[word].orEmpty())
+                    } else {
+                        e
+                    }
+                }
+                filled?.let { it to (times[word] ?: 0L) }
             }
             .sortedByDescending { it.second }
             .map { it.first }
@@ -454,16 +474,37 @@ class DictRepository(private val context: Context) {
         return o.toString()
     }
 
-    fun addFavorite(word: String) {
+    /** 收藏词的中文释义表（word -> meaning）；词典查不到时兜底显示/朗读。 */
+    private fun loadMeanings(): MutableMap<String, String> {
+        val json = prefs.getString("meanings", "{}") ?: "{}"
+        return runCatching {
+            val o = JSONObject(json)
+            val m = mutableMapOf<String, String>()
+            o.keys().forEach { k -> m[k] = o.optString(k, "") }
+            m
+        }.getOrElse { mutableMapOf() }
+    }
+
+    private fun meaningsJson(map: Map<String, String>): String {
+        val o = JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        return o.toString()
+    }
+
+    fun addFavorite(word: String, meaning: String = "") {
         val set = prefs.getStringSet("words", emptySet())?.toMutableSet() ?: mutableSetOf()
         val isNew = set.add(word)
         val times = loadWordTimes()
         if (isNew || !times.containsKey(word)) {
             times[word] = System.currentTimeMillis()
         }
+        val meanings = loadMeanings()
+        val m = meaning.trim()
+        if (m.isNotEmpty()) meanings[word] = m
         prefs.edit()
             .putStringSet("words", set)
             .putString("word_times", timesJson(times))
+            .putString("meanings", meaningsJson(meanings))
             .apply()
     }
 
@@ -471,9 +512,11 @@ class DictRepository(private val context: Context) {
         val set = prefs.getStringSet("words", emptySet())?.toMutableSet() ?: mutableSetOf()
         set.remove(word)
         val times = loadWordTimes().apply { remove(word) }
+        val meanings = loadMeanings().apply { remove(word) }
         prefs.edit()
             .putStringSet("words", set)
             .putString("word_times", timesJson(times))
+            .putString("meanings", meaningsJson(meanings))
             .apply()
     }
 
@@ -491,9 +534,11 @@ class DictRepository(private val context: Context) {
         val oldTimes = loadWordTimes()
         val now = System.currentTimeMillis()
         val newTimes = newSet.associateWith { oldTimes[it] ?: now }
+        val newMeanings = loadMeanings().filterKeys { it in newSet }
         prefs.edit()
             .putStringSet("words", newSet)
             .putString("word_times", timesJson(newTimes))
+            .putString("meanings", meaningsJson(newMeanings))
             .apply()
     }
 
@@ -552,6 +597,12 @@ class DictRepository(private val context: Context) {
     companion object {
         const val DB_NAME = "dictionary.db"
         const val DB_VERSION = 4
+
+        /**
+         * 随包内置词典的内容版本。每次更新 `assets/dictionary.db` 后 +1，
+         * 启动时若设备上的已拷贝版本低于此值，则删除旧库重新拷贝（修复旧安装遗留的脏数据）。
+         */
+        const val BUNDLED_DB_VERSION = 2
 
         /** 3-gram 候选要求与查询共享的最小 gram 数（经验阈值） */
         private const val MIN_SHARED_GRAMS = 3

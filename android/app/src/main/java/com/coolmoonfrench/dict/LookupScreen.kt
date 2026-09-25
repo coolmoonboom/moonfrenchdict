@@ -546,7 +546,7 @@ fun LookupScreen(
                                                 repository.removeFavorite(entry.word)
                                                 favoriteWords = favoriteWords - entry.word
                                             } else {
-                                                repository.addFavorite(entry.word)
+                                                repository.addFavorite(entry.word, entry.meaning)
                                                 favoriteWords = favoriteWords + entry.word
                                             }
                                         },

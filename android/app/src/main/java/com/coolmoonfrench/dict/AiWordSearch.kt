@@ -36,7 +36,8 @@ object AiWordSearch {
         1. 只输出一个 JSON 对象，不要任何解释，不要代码块标记。
         2. JSON 格式：{"word":"单词原形","ipa":"/音标/","meaning":"简洁中文释义（标注词性）"}
         3. ipa 用一对斜杠包裹；若为动词，word 填不定式。
-        4. 若该词不是法语词，meaning 填「未找到该词的释义」。
+        4. word 必须保留法语重音符号（é è ê à ç î ô û ù 等），禁止写成无重音形式。
+        5. 若该词不是法语词，meaning 填「未找到该词的释义」。
     """.trimIndent()
 
     private fun parse(reply: String, fallbackWord: String): AiWordInfo? {

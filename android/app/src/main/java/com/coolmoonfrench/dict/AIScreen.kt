@@ -514,7 +514,8 @@ fun AIScreen(
                         }
                         TextButton(
                             onClick = { pendingAttachments = emptyList() },
-                            modifier = Modifier.height(24.dp)
+                            modifier = Modifier.height(24.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                         ) {
                             Text("全清", fontSize = 10.sp)
                         }

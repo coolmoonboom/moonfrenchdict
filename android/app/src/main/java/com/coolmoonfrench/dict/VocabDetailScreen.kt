@@ -195,7 +195,7 @@ fun VocabDetailScreen(
                     }
                 }
                 IconButton(onClick = {
-                    if (fav) repository.removeFavorite(entry.word) else repository.addFavorite(entry.word)
+                    if (fav) repository.removeFavorite(entry.word) else repository.addFavorite(entry.word, entry.meaning)
                     fav = !fav
                 }) {
                     Icon(

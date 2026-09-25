@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -43,8 +44,9 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 
 /**
- * 双击回调：在 Initial 事件阶段监听、且**不消费**事件，因此不会影响输入框自身的
- * 单击定位光标、长按选择等行为；检测到两次快速点击后触发 [onDoubleTap]。
+ * 双击回调：在 Initial 事件阶段监听。第一次点击放行（不影响输入框单击定位光标、
+ * 长按选择）；检测到第二次快速点击后，**消费**这次手势并触发 [onDoubleTap]，
+ * 从而阻止输入框自身的「双击选词」覆盖我们设置的整段选区。
  */
 @Composable
 fun Modifier.onDoubleTap(onDoubleTap: () -> Unit): Modifier = composed {
@@ -52,16 +54,16 @@ fun Modifier.onDoubleTap(onDoubleTap: () -> Unit): Modifier = composed {
     val current by rememberUpdatedState(onDoubleTap)
     pointerInput(Unit) {
         awaitEachGesture {
-            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
-            if (up != null) {
-                val now = up.uptimeMillis
-                if (now - lastTap < 350L) {
-                    current()
-                    lastTap = 0L
-                } else {
-                    lastTap = now
-                }
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val now = down.uptimeMillis
+            val isDouble = now - lastTap in 1..300L
+            lastTap = if (isDouble) 0L else now
+            if (isDouble) {
+                down.consume()
+                current()
+                waitForUpOrCancellation(pass = PointerEventPass.Initial)?.consume()
+            } else {
+                waitForUpOrCancellation(pass = PointerEventPass.Initial)
             }
         }
     }
@@ -124,11 +126,11 @@ fun SelectableOutlinedTextField(
         runCatching { clipboard.hasPrimaryClip() }.getOrDefault(false)
     }
 
-    Box {
+    Box(modifier = modifier) {
         OutlinedTextField(
             value = tf,
             onValueChange = { commit(it) },
-            modifier = modifier.onDoubleTap {
+            modifier = Modifier.fillMaxWidth().onDoubleTap {
                 tf = tf.copy(selection = TextRange(0, tf.text.length))
                 menuExpanded = true
             },

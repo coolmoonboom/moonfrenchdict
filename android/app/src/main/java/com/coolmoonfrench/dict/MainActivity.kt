@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Notes
 import coil3.ImageLoader
 import coil3.compose.setSingletonImageLoaderFactory
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.automirrored.filled.Help
@@ -405,12 +406,18 @@ fun MainTabs(
                     NavigationBarItem(
                         selected = selected == 3,
                         onClick = { selected = 3 },
-                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                        label = { Text("分组") }
+                        icon = { Icon(Icons.AutoMirrored.Filled.CompareArrows, contentDescription = null) },
+                        label = { Text("配合") }
                     )
                     NavigationBarItem(
                         selected = selected == 4,
                         onClick = { selected = 4 },
+                        icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
+                        label = { Text("分组") }
+                    )
+                    NavigationBarItem(
+                        selected = selected == 5,
+                        onClick = { selected = 5 },
                         icon = { Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null) },
                         label = { Text("句子") }
                     )
@@ -428,9 +435,12 @@ fun MainTabs(
                     ConjugationScreen(conjugator, repository, translator, morphology, aiPrefs)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 3) 1f else 0f).zIndex(if (selected == 3) 1f else 0f)) {
-                    VerbGroupScreen(conjugator)
+                    AgreementScreen(repository)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 4) 1f else 0f).zIndex(if (selected == 4) 1f else 0f)) {
+                    VerbGroupScreen(conjugator)
+                }
+                Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 5) 1f else 0f).zIndex(if (selected == 5) 1f else 0f)) {
                     SentenceScreen(repository, translator, conjugator, analyzer, aiPrefs)
                 }
             }
