@@ -73,7 +73,9 @@ fun LookupScreen(
     conjugator: VerbConjugator,
     morphology: MorphologyAnalyzer,
     settings: AppSettings,
-    aiPrefs: AIPreferences
+    aiPrefs: AIPreferences,
+    active: Boolean = false,
+    onImport: () -> Unit = {}
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var selected by remember { mutableStateOf<DictEntry?>(null) }
@@ -276,19 +278,33 @@ fun LookupScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        SelectableOutlinedTextField(
-            value = query,
-            onValueChange = { doSearch(it) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            placeholder = { Text("输入法语单词或中文") },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.outline
+        // 搜索栏：输入框 + 导入按钮（进入界面自动聚焦并弹出输入法）
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 12.dp, end = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SelectableOutlinedTextField(
+                value = query,
+                onValueChange = { doSearch(it) },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 4.dp),
+                placeholder = { Text("输入法语单词或中文") },
+                singleLine = true,
+                requestFocusKey = if (active) true else null,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                )
             )
-        )
+            OutlinedButton(
+                onClick = onImport,
+                modifier = Modifier.padding(end = 4.dp)
+            ) {
+                Text("导入")
+            }
+        }
 
         SelectionContainer {
             LazyColumn(

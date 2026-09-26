@@ -1,8 +1,8 @@
 package com.coolmoonfrench.dict
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
+import android.os.SystemClock
+import android.view.MotionEvent
+import android.view.View
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -14,8 +14,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
@@ -28,20 +26,29 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 双击回调：在 Initial 事件阶段监听。第一次点击放行（不影响输入框单击定位光标、
@@ -70,10 +77,31 @@ fun Modifier.onDoubleTap(onDoubleTap: () -> Unit): Modifier = composed {
 }
 
 /**
+ * 在 ComposeView 的指定位置（窗口坐标）派发一次长按手势，尽力唤起系统原生文本选择工具条。
+ * Compose 不支持编程式直接弹出工具条，只能模拟长按；坐标命中失败时用户仍可手动长按唤出。
+ */
+private fun dispatchLongPress(view: View, x: Float, y: Float) {
+    val downTime = SystemClock.uptimeMillis()
+    val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+    view.dispatchTouchEvent(down)
+    view.postDelayed({
+        val up = MotionEvent.obtain(
+            downTime, downTime + 500, MotionEvent.ACTION_UP, x, y, 0
+        )
+        view.dispatchTouchEvent(up)
+    }, 500)
+}
+
+/**
  * 与 [OutlinedTextField] 用法一致、但内部使用 [TextFieldValue] 的输入框，支持：
- * - 双击全选并弹出「复制 / 剪切 / 粘贴」菜单；
+ * - 双击全选（单行词框选整词，多行句框选全句），自动聚焦并弹出输入法；
  * - 右侧一键清除（X）按钮（[showClear] 且文本非空且可编辑时显示）。
+ * 文本选择的复制 / 剪切 / 粘贴统一使用系统原生长按文本选择工具条，不再自绘菜单。
  * 对外仍以 String 读写，调用方无需改动原有状态与逻辑。
+ *
+ * @param focusRequester 外部聚焦器（可空，内部默认持有）。
+ * @param requestFocusKey 当该值从 null 变为非 null 时，自动聚焦并弹出输入法，
+ *   用于「点开界面即开始搜索」。聚焦成功后再弹输入法，避免键盘弹出但无光标。
  */
 @Composable
 fun SelectableOutlinedTextField(
@@ -95,18 +123,30 @@ fun SelectableOutlinedTextField(
     textStyle: TextStyle = LocalTextStyle.current,
     shape: Shape = OutlinedTextFieldDefaults.shape,
     colors: TextFieldColors = OutlinedTextFieldDefaults.colors(),
-    showClear: Boolean = true
+    showClear: Boolean = true,
+    focusRequester: FocusRequester? = null,
+    requestFocusKey: Any? = null
 ) {
-    val context = LocalContext.current
-    val clipboard = remember(context) {
-        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    }
+    val view = LocalView.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val internalFocusRequester = remember { FocusRequester() }
+    val fr = focusRequester ?: internalFocusRequester
     var tf by remember { mutableStateOf(TextFieldValue(value)) }
-    var menuExpanded by remember { mutableStateOf(false) }
+    var fieldBounds by remember { mutableStateOf<Rect?>(null) }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(value) {
         if (value != tf.text) {
             tf = tf.copy(text = value, selection = TextRange(value.length))
+        }
+    }
+
+    // 外部要求聚焦（进入界面自动弹输入法）：先聚焦再弹键盘，确保光标在位。
+    LaunchedEffect(requestFocusKey) {
+        if (requestFocusKey != null) {
+            fr.requestFocus()
+            delay(120)
+            keyboard?.show()
         }
     }
 
@@ -115,25 +155,33 @@ fun SelectableOutlinedTextField(
         onValueChange(v.text)
     }
 
-    /** 有选区时取选区文本，否则取全文。 */
-    fun selectedOrAll(): String {
-        val s = tf.selection
-        return if (!s.collapsed) tf.text.substring(s.min, s.max) else tf.text
+    // 双击全选：选中全部文本，聚焦并弹出输入法，再尽力唤起系统原生文本选择工具条。
+    fun selectAllAndFocus() {
+        tf = tf.copy(selection = TextRange(0, tf.text.length))
+        fr.requestFocus()
+        scope.launch {
+            delay(120)
+            keyboard?.show()
+        }
+        val b = fieldBounds
+        if (b != null) {
+            val x = b.left + b.width / 2f
+            val y = b.top + b.height / 2f
+            view.postDelayed({ dispatchLongPress(view, x, y) }, 300)
+        }
     }
 
-    // 菜单打开时判断剪贴板是否有内容；用 hasPrimaryClip 避免触发系统的剪贴板读取提示。
-    val canPaste = remember(menuExpanded) {
-        runCatching { clipboard.hasPrimaryClip() }.getOrDefault(false)
-    }
-
-    Box(modifier = modifier) {
+    Box(
+        modifier = modifier
+            .onGloballyPositioned { fieldBounds = it.boundsInWindow() }
+    ) {
         OutlinedTextField(
             value = tf,
             onValueChange = { commit(it) },
-            modifier = Modifier.fillMaxWidth().onDoubleTap {
-                tf = tf.copy(selection = TextRange(0, tf.text.length))
-                menuExpanded = true
-            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(fr)
+                .onDoubleTap(::selectAllAndFocus),
             enabled = enabled,
             readOnly = readOnly,
             singleLine = singleLine,
@@ -167,51 +215,5 @@ fun SelectableOutlinedTextField(
             shape = shape,
             colors = colors
         )
-
-        DropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false }
-        ) {
-            DropdownMenuItem(
-                text = { Text("复制") },
-                enabled = tf.text.isNotEmpty(),
-                onClick = {
-                    val text = selectedOrAll()
-                    if (text.isNotEmpty()) {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("text", text))
-                    }
-                    menuExpanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("剪切") },
-                enabled = tf.text.isNotEmpty() && enabled && !readOnly,
-                onClick = {
-                    val s = tf.selection
-                    val text = selectedOrAll()
-                    if (text.isNotEmpty()) {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("text", text))
-                    }
-                    val newText = if (!s.collapsed) tf.text.removeRange(s.min, s.max) else ""
-                    commit(tf.copy(text = newText, selection = TextRange(newText.length)))
-                    menuExpanded = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text("粘贴") },
-                enabled = canPaste && enabled && !readOnly,
-                onClick = {
-                    val paste = runCatching {
-                        clipboard.primaryClip?.getItemAt(0)?.text?.toString().orEmpty()
-                    }.getOrDefault("")
-                    if (paste.isNotEmpty()) {
-                        val s = tf.selection
-                        val newText = tf.text.replaceRange(s.min, s.max, paste)
-                        commit(tf.copy(text = newText, selection = TextRange(s.min + paste.length)))
-                    }
-                    menuExpanded = false
-                }
-            )
-        }
     }
 }

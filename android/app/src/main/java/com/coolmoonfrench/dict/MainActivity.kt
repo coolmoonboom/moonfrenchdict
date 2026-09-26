@@ -216,6 +216,7 @@ fun MainTabs(
     var showVoiceChat by remember { mutableStateOf(false) }
     var showCalNum by remember { mutableStateOf(false) }
     var showPhonetics by remember { mutableStateOf(false) }
+    var showImport by remember { mutableStateOf(false) }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -429,10 +430,14 @@ fun MainTabs(
                     AIScreen(prefs = aiPrefs, onOpenSettings = { showAISettings = true }, refreshKey = aiRefreshKey)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 1) 1f else 0f).zIndex(if (selected == 1) 1f else 0f)) {
-                    LookupScreen(repository, translator, conjugator, morphology, settings, aiPrefs)
+                    LookupScreen(
+                        repository, translator, conjugator, morphology, settings, aiPrefs,
+                        active = selected == 1,
+                        onImport = { showImport = true }
+                    )
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 2) 1f else 0f).zIndex(if (selected == 2) 1f else 0f)) {
-                    ConjugationScreen(conjugator, repository, translator, morphology, aiPrefs)
+                    ConjugationScreen(conjugator, repository, translator, morphology, aiPrefs, active = selected == 2)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 3) 1f else 0f).zIndex(if (selected == 3) 1f else 0f)) {
                     AgreementScreen(repository)
@@ -465,6 +470,7 @@ fun MainTabs(
     BackHandler(enabled = showVideoImport) { showVideoImport = false }
     BackHandler(enabled = showVoiceChat) { showVoiceChat = false }
     BackHandler(enabled = showCalNum) { showCalNum = false }
+    BackHandler(enabled = showImport) { showImport = false }
 
     // 收藏（双栏：AI收藏 + 单词句子收藏）
     if (showFavorites) {
@@ -592,6 +598,24 @@ fun MainTabs(
             VideoImportScreen(
                 onBack = { showVideoImport = false },
                 onExtractSubtitles = onExtractSubtitles
+            )
+        }
+    }
+
+    // AI 批量导入收藏（从查词界面「导入」进入）
+    if (showImport) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            ImportScreen(
+                prefs = aiPrefs,
+                repository = repository,
+                onBack = { showImport = false },
+                onOpenSettings = {
+                    showImport = false
+                    showAISettings = true
+                }
             )
         }
     }

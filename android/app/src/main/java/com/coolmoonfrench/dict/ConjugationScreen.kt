@@ -36,7 +36,8 @@ fun ConjugationScreen(
     repository: DictRepository,
     translator: MyMemoryTranslator,
     morphology: MorphologyAnalyzer,
-    aiPrefs: AIPreferences
+    aiPrefs: AIPreferences,
+    active: Boolean = false
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var conj by remember { mutableStateOf<Conjugation?>(null) }
@@ -248,6 +249,7 @@ fun ConjugationScreen(
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("输入法语动词（原形或变体）或中文含义") },
                 singleLine = true,
+                requestFocusKey = if (active) true else null,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = MaterialTheme.colorScheme.primary,
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline
