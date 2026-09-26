@@ -25,6 +25,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -436,6 +438,7 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
 }
 
 /** 悬浮窗内容：大词 + 小例句，锁定/设置交互，底部上一句/下一句/单句循环。 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun FloatingWordWindow(service: FloatingWindowService) {
     val context = LocalContext.current
@@ -750,7 +753,10 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                                 )
                             }
                             Text("语速", fontSize = 13.sp)
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 AppSettings.SPEECH_RATE_OPTIONS.forEach { rate ->
                                     FilterChip(
                                         selected = settings.speechRate == rate,
@@ -767,7 +773,10 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                             }
                             Spacer(Modifier.height(6.dp))
                             Text("字号", fontSize = 13.sp)
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 listOf(0.8f, 1f, 1.2f, 1.4f).forEach { s ->
                                     FilterChip(
                                         selected = settings.floatFontScale == s,

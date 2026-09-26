@@ -22,6 +22,7 @@ object Speech {
     fun setSpeechRate(v: Float) {
         Espeak.setSpeechRate(v)
         SystemTts.setSpeechRate(v)
+        ChineseTts.setSpeechRate(v)
     }
 
     /** 预初始化两个引擎（幂等，非阻塞）。 */

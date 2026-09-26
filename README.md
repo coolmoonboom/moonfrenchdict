@@ -53,7 +53,7 @@ APK 输出路径：`android/app/build/outputs/apk/release/app-release.apk`、`an
 
 ## 安装
 
-- 直接下载 [最新 Release](https://github.com/coolmoonboom/moonfrenchdict/releases/latest) 中的 APK 安装（当前 v1.0.46）
+- 直接下载 [最新 Release](https://github.com/coolmoonboom/moonfrenchdict/releases/latest) 中的 APK 安装（当前 v1.0.47）
 - 或按上方步骤本地构建后安装
 - 仅提供 arm64-v8a，最低支持 Android 7.0（minSdk 24）
 

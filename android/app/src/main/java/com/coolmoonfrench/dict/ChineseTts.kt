@@ -22,7 +22,7 @@ object ChineseTts {
 
     private const val TAG = "ChineseTts"
     private const val UTTERANCE_ID = "zh-meaning"
-    private const val SPEAK_TIMEOUT_MS = 8_000L
+    private const val SPEAK_TIMEOUT_MS = 30_000L
     private const val READY_TIMEOUT_MS = 5_000L
 
     enum class State { NOT_READY, INITIALIZING, READY, UNAVAILABLE, FAILED }
@@ -36,6 +36,14 @@ object ChineseTts {
     private var tts: TextToSpeech? = null
     private var done: CompletableDeferred<Unit>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    @Volatile
+    private var speechRate: Float = 1f
+
+    /** 中文语音语速（0.25-1.5），在 [speakAwait] 朗读前应用。 */
+    fun setSpeechRate(v: Float) {
+        speechRate = v.coerceIn(0.25f, 1.5f)
+    }
 
     /** 是否已就绪且设备支持中文语音。 */
     fun isAvailable(): Boolean = state == State.READY && available
@@ -104,6 +112,7 @@ object ChineseTts {
         }
         if (state != State.READY) return
         val engine = tts ?: return
+        runCatching { engine.setSpeechRate(speechRate) }
         val d = CompletableDeferred<Unit>()
         done = d
         val result = try {
@@ -116,8 +125,12 @@ object ChineseTts {
             done = null
             return
         }
-        withTimeoutOrNull(SPEAK_TIMEOUT_MS) { d.await() }
+        val finished = withTimeoutOrNull(SPEAK_TIMEOUT_MS) { d.await() }
         done = null
+        if (finished == null) {
+            // 中文解释过长超出超时仍在朗读：主动停止，避免与下一个单词的法语语音叠加。
+            runCatching { engine.stop() }
+        }
     }
 
     /** 停止当前朗读并解除等待。 */
