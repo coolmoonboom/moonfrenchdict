@@ -440,7 +440,7 @@ fun MainTabs(
                     ConjugationScreen(conjugator, repository, translator, morphology, aiPrefs, active = selected == 2)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 3) 1f else 0f).zIndex(if (selected == 3) 1f else 0f)) {
-                    AgreementScreen(repository)
+                    AgreementScreen(repository, aiPrefs)
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 4) 1f else 0f).zIndex(if (selected == 4) 1f else 0f)) {
                     VerbGroupScreen(conjugator)

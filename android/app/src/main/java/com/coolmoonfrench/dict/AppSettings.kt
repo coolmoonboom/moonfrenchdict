@@ -46,6 +46,10 @@ class AppSettings(context: Context) {
     var floatFontScale by mutableFloatStateOf(prefs.getFloat("float_font_scale", 1f))
         private set
 
+    /** 悬浮窗词卡背景不透明度（0 完全透底，白字直接叠在桌面；1 全黑底；默认 1.0） */
+    var floatBgAlpha by mutableFloatStateOf(snapFloatBgAlpha(prefs.getFloat("float_bg_alpha", 1f)))
+        private set
+
     fun updateSyncInterval(v: Int) {
         val clamped = v.coerceIn(0, 24)
         syncIntervalHours = clamped
@@ -92,12 +96,25 @@ class AppSettings(context: Context) {
         prefs.edit().putFloat("float_font_scale", clamped).apply()
     }
 
+    fun updateFloatBgAlpha(v: Float) {
+        val snapped = snapFloatBgAlpha(v)
+        floatBgAlpha = snapped
+        prefs.edit().putFloat("float_bg_alpha", snapped).apply()
+    }
+
     companion object {
         /** 可选的朗读语速档位（倍率），UI 按此顺序展示。 */
         val SPEECH_RATE_OPTIONS = listOf(0.25f, 0.5f, 0.75f, 1f)
 
+        /** 悬浮词卡背景可选不透明度档位；0 为完全透底（白字直接叠在桌面上），1 为全黑底。 */
+        val FLOAT_BG_ALPHA_OPTIONS = listOf(0f, 0.25f, 0.5f, 0.75f, 1f)
+
         /** 吸附到最近的合法档位，避免历史遗留值落在档位之间导致 UI 无选中项。 */
         private fun snapSpeechRate(v: Float): Float =
             SPEECH_RATE_OPTIONS.minByOrNull { abs(it - v) } ?: 1f
+
+        /** 吸附到最近的背景不透明度档位。 */
+        private fun snapFloatBgAlpha(v: Float): Float =
+            FLOAT_BG_ALPHA_OPTIONS.minByOrNull { abs(it - v) } ?: 1f
     }
 }

@@ -103,6 +103,43 @@ object ImportWordParser {
     }
 }
 
+/** 收藏批量整理：把「单词 + 旧释义」交给 AI 统一改写为标准中文词条格式。 */
+object FavoriteRefiner {
+
+    /** 单次 AI 调用的词条数，控制上下文规模、避免长输出被截断。 */
+    const val CHUNK_SIZE = 12
+
+    /** 返回整理好的词条；调用方按返回的 word 与原收藏匹配写回。无配置/失败返回空。 */
+    suspend fun refine(config: AIModelConfig, words: List<Pair<String, String>>): List<ImportedWord> {
+        if (words.isEmpty() || !IpaService.isConfigured(config)) return emptyList()
+        val list = words.joinToString("\n") { (w, m) -> "$w\t$m" }
+        val reply = try {
+            AIClient.chat(config, listOf(AIMessage("user", buildPrompt(list))))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        // 只保留义项确为中文的结果：个别条目没整理好就保留原义，不做破坏性覆盖。
+        return ImportWordParser.parse(reply).filter { hasChinese(it.meaning) }
+    }
+
+    private fun buildPrompt(list: String): String = """
+        你是法语词典编辑。下面是用户收藏里的「单词<TAB>当前释义」清单，
+        部分释义是英文、速记或格式杂乱，请逐条改写成统一的中文标准词条。
+        清单内容：
+        $list
+        要求：
+        1. 只输出一个 JSON 数组，不要任何解释，不要代码块标记。
+        2. 每个元素格式：
+           {"word":"与输入单词逐字一致","pos":"词性简称(n.m. n.f. adj. v.t. v.i. adv. v.phr. contraction 等)","ipa":"/标准IPA音标/","meaning":"简洁中文释义(必须是中文)","example":"含该词的地道法语例句","example_zh":"例句的中文翻译"}
+        3. word 原样保留输入内容：短语（如 aller faire）、缩合（如 Qu'on）都要原样保留，禁止改写成单个动词原形。
+        4. meaning 必须是中文；原义是英文的准确翻译过来，禁止臆造。
+        5. 无法给出可靠例句时 example 与 example_zh 留空字符串。
+        6. 输入每行输出一条，顺序与输入一致，不要合并、删减或新增。
+    """.trimIndent()
+}
+
 /** AI 批量导入收藏：粘贴内容 → AI 识别 → 可编辑预览 → 写入单词收藏。 */
 @Composable
 fun ImportScreen(

@@ -70,11 +70,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -119,6 +120,13 @@ object FloatingWindowState {
     /** 悬浮窗当前模式 */
     var mode by androidx.compose.runtime.mutableStateOf(FloatingMode.WORD)
 
+    /**
+     * 词卡模式是否锁定位置：锁定后窗口不可拖动，且整个窗口不再拦截任何触摸——
+     * 即使悬浮窗遮住桌面应用，底层应用也能正常点击（点击穿透）。
+     * 解锁通过通知栏「解锁悬浮窗」（锁定后窗口本身收不到点击，无法就地解锁）。
+     */
+    var locked by androidx.compose.runtime.mutableStateOf(false)
+
     /** 字幕模式：已识别完成的句子（可上下滚动查看上一句） */
     val subtitleLines = androidx.compose.runtime.mutableStateListOf<String>()
 
@@ -161,6 +169,8 @@ object FloatingWindowControl {
 
     /** 把词加入悬浮队列并显示（服务未启动则先启动）。 */
     fun add(context: Context, entry: VocabEntry) {
+        // 新的「加词播放」交互隐含解锁：避免残留的锁定态让窗口继续穿透、点不到卡片。
+        FloatingWindowState.locked = false
         if (!FloatingWindowState.visible || FloatingWindowState.mode != FloatingMode.WORD) {
             FloatingWindowState.mode = FloatingMode.WORD
             FloatingWindowState.queue.clear()
@@ -187,6 +197,8 @@ object FloatingWindowControl {
      */
     fun startListLoop(context: Context, words: List<VocabEntry>, startIndex: Int, revealMeaning: Boolean = false) {
         if (words.isEmpty()) return
+        // 同 add：开始新一轮循环播放时清除锁定穿透态。
+        FloatingWindowState.locked = false
         FloatingWindowState.mode = FloatingMode.WORD
         FloatingWindowState.queue.clear()
         FloatingWindowState.queue.addAll(words)
@@ -286,6 +298,10 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     companion object {
         private const val NOTIF_CHANNEL_ID = "floating_window"
         private const val NOTIF_ID = 4102
+
+        /** 锁定（点击穿透）期间窗口收不到任何触摸，通知栏 action 是唯一操作入口。 */
+        const val ACTION_UNLOCK = "com.coolmoonfrench.dict.action.FLOATING_UNLOCK"
+        const val ACTION_CLOSE = "com.coolmoonfrench.dict.action.FLOATING_CLOSE"
     }
 
     private lateinit var wm: WindowManager
@@ -316,12 +332,15 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     fun windowY(): Int = params?.y ?: 0
 
     /**
-     * 把悬浮窗移动到绝对坐标（物理像素，`gravity = TOP or START`）。
+     * 把词卡窗口移动到绝对坐标（物理像素，`gravity = TOP or START`）。
      *
-     * 拖动时不能用「本帧局部位移」累加：窗口会随手指移动，下一帧指针的局部坐标随即
-     * 相对新窗口位置回退，于是窗口永远追不上手指（不跟手），并周期性补偿造成抖动。
-     * 用绝对定位（当前窗口位置 + 相对按下点的位移）即可消除该反馈。
-     * 注意：Compose 手势给的位移是 dp，调用方须乘 density 换算成像素再传进来。
+     * 拖动采用「锚定 + 手指屏幕绝对位移」算法：拖动开始那一帧记录锚点
+     * （当时的窗口像素坐标 + 按下点在屏幕上的像素坐标 = 局部坐标 + 窗口坐标，
+     * Compose 手势与窗口参数同为像素，全程不乘 density），之后每帧目标位置 =
+     * 锚点窗口坐标 + [(按下点局部坐标 + 当前窗口坐标) -(按下点局部坐标 + 锚点窗口坐标)]。
+     * 关键是把每帧窗口坐标换算回屏幕绝对坐标、再与锚点求差——实时修正窗口移动带来的
+     * 参考系漂移，窗口精确跟手。若直接把局部位移累加到实时窗口坐标，窗口越追越偏，
+     * 正是之前悬浮窗乱飘、脱手飞走的根因。
      */
     fun moveTo(x: Float, y: Float) {
         val p = params ?: return
@@ -331,7 +350,39 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
         runCatching { wm.updateViewLayout(v, p) }
     }
 
+    /**
+     * 锁定时的点击穿透：加上 FLAG_NOT_TOUCHABLE 后窗口不拦截任何触摸，
+     * 悬浮窗遮住桌面应用也能点到底层；解锁靠通知栏 action（见 onStartCommand）。
+     */
+    fun setTouchThrough(enabled: Boolean) {
+        val p = params ?: return
+        val v = overlay ?: return
+        val mask = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val newFlags = if (enabled) p.flags or mask else p.flags and mask.inv()
+        if (newFlags == p.flags) return
+        p.flags = newFlags
+        runCatching { wm.updateViewLayout(v, p) }
+    }
+
+    /** 锁定状态等变化后刷新通知栏按钮（增加/移除「解锁悬浮窗」）。 */
+    fun refreshNotification() {
+        if (FloatingWindowState.mode == FloatingMode.WORD) updateForeground()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 锁定期间窗口点击穿透、收不到任何触摸，通知栏按钮是唯一入口：解锁 / 关闭。
+        // 解锁只需翻转全局状态，词卡组合期的 LaunchedEffect(locked) 会负责恢复触摸并刷新通知。
+        when (intent?.action) {
+            ACTION_UNLOCK -> {
+                FloatingWindowState.locked = false
+                setTouchThrough(false)
+                return START_STICKY
+            }
+            ACTION_CLOSE -> {
+                FloatingWindowControl.stop(this)
+                return START_NOT_STICKY
+            }
+        }
         if (overlay == null) showOverlay()
         updateForeground()
         return START_STICKY
@@ -381,13 +432,30 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
-        return builder
-            .setContentTitle("法语悬浮窗")
-            .setContentText("正在显示悬浮卡片并朗读…")
+        builder
+            .setContentTitle(if (FloatingWindowState.locked) "法语悬浮窗（已锁定·点击穿透）" else "法语悬浮窗")
+            .setContentText(if (FloatingWindowState.locked) "悬浮窗已锁定，点击只会落在底层应用上；点此解锁" else "正在显示悬浮卡片并朗读…")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(open)
             .setOngoing(true)
-            .build()
+        // 锁定态下窗口不接受触摸，「解锁悬浮窗」必须常驻通知栏。
+        if (FloatingWindowState.locked) {
+            val unlock = PendingIntent.getService(
+                this,
+                1,
+                Intent(this, FloatingWindowService::class.java).setAction(ACTION_UNLOCK),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            builder.addAction(0, "解锁悬浮窗", unlock)
+        }
+        val close = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, FloatingWindowService::class.java).setAction(ACTION_CLOSE),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        builder.addAction(0, "关闭悬浮窗", close)
+        return builder.build()
     }
 
     private fun showOverlay() {
@@ -456,13 +524,19 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         }
     }
 
-    // 锁定状态 / 设置面板（悬浮窗局部状态，服务重启即复位）
-    var locked by remember { mutableStateOf(false) }
+    // 锁定状态 / 设置面板（锁定提升到全局状态：配合通知栏解锁动作）
+    val locked = FloatingWindowState.locked
     var settingsVisible by remember { mutableStateOf(false) }
     var tapTimes by remember { mutableStateOf<MutableList<Long>>(mutableListOf()) }
     val scope = rememberCoroutineScope()
-    // 手指位移与窗口坐标（params.x/y）单位不同：前者为 dp，后者为物理像素，拖动换算必须乘 density。
-    val density = LocalDensity.current.density
+
+    // 锁定 → 整窗点击穿透（FLAG_NOT_TOUCHABLE）并刷新通知栏按钮；解锁即恢复拦截。
+    // 通知栏是锁定后的唯一解锁入口（窗口此时收不到点击），所以这里也要清掉展开的设置面板。
+    LaunchedEffect(locked) {
+        service.setTouchThrough(locked)
+        service.refreshNotification()
+        if (locked) settingsVisible = false
+    }
 
     // 朗读：切词自动播一次「单词→例句」；单句循环则反复播当前词；
     // 列表循环则播完自动切下一词（切词会重启本效果继续播，形成连续循环）。
@@ -501,12 +575,20 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
             modifier = Modifier
                 .widthIn(min = 180.dp, max = 330.dp)
                 .padding(horizontal = 6.dp, vertical = 6.dp)
-                // 整卡手势：拖动（未锁定）/ 长按（设置面板）/ 三击关闭
-                .pointerInput(locked) {
+                // 整卡手势：拖动（未锁定）/ 长按（设置面板）/ 三击关闭。
+                // 【乱飘修复】拖动只累加「帧间屏幕位移」（positionChange），全程不再读取
+                // 实时窗口坐标做加法：实时窗口坐标与 WM 实际生效位置存在 1-2 帧滞后，
+                // 读它会引入正反馈，帧延迟 ≥2 时增益发散 → 窗口自激震荡乱飘、松手飞走。
+                // Compose 指针坐标与 WindowManager 坐标同为物理像素，无需 density 换算。
+                .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var dragging = false
                         var longFired = false
+                        var accX = down.position.x
+                        var accY = down.position.y
+                        var targetX = service.windowX().toFloat()
+                        var targetY = service.windowY().toFloat()
                         val longPressJob = scope.launch {
                             delay(500)
                             if (!dragging) {
@@ -521,20 +603,22 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                             } ?: break
                             when (event.type) {
                                 PointerEventType.Move -> {
-                                    if (!locked && !longFired) {
-                                        val total = change.position - down.position
+                                    if (!FloatingWindowState.locked && !longFired) {
+                                        val d = change.positionChange()
+                                        accX += d.x
+                                        accY += d.y
                                         if (!dragging &&
-                                            (abs(total.x) > 8f || abs(total.y) > 8f)
+                                            (abs(accX - down.position.x) > 8f ||
+                                                abs(accY - down.position.y) > 8f)
                                         ) {
                                             dragging = true
                                             longPressJob.cancel()
                                         }
                                         if (dragging) {
                                             change.consume()
-                                            service.moveTo(
-                                                service.windowX() + (change.position.x - down.position.x) * density,
-                                                service.windowY() + (change.position.y - down.position.y) * density
-                                            )
+                                            targetX += d.x
+                                            targetY += d.y
+                                            service.moveTo(targetX, targetY)
                                         }
                                     }
                                 }
@@ -558,11 +642,11 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                     }
                 }
         ) {
-            // 顶部：单词 + 例句（原生字幕风格：黑底白字，黑底随文字内容自适应）
+            // 顶部：单词 + 例句（原生字幕风格：白字，黑底随文字内容自适应，可在设置面板调节透明度）
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color.Black, RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = if (settings.floatBgAlpha <= 0f) 0.001f else settings.floatBgAlpha), RoundedCornerShape(10.dp))
                     .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
@@ -628,25 +712,30 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 6.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
+                    // 底栏黑底跟随词卡透明度等比缩放，保持原来的相对层次感
+                    .background(Color.Black.copy(alpha = 0.55f * settings.floatBgAlpha), RoundedCornerShape(10.dp))
                     .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 左下角常驻锁：未锁定时为开锁图标；单击锁定、双击解锁；锁定后不可拖动
+                // 左下角常驻锁：单击锁定。锁定后整窗点击穿透（底层应用可直接点击），
+                // 窗口自身收不到任何触摸，只能通过通知栏「解锁悬浮窗」解除。
                 Box(
                     modifier = Modifier
                         .size(32.dp)
-                        .pointerInput(locked) {
+                        .pointerInput(Unit) {
                             detectTapGestures(
-                                onTap = { locked = true },
-                                onDoubleTap = { locked = false }
+                                onTap = {
+                                    FloatingWindowState.locked = true
+                                    settingsVisible = false
+                                }
                             )
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         if (locked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-                        contentDescription = if (locked) "已锁定（双击解锁）" else "未锁定（单击锁定）",
+                        contentDescription =
+                        if (locked) "已锁定·点击穿透（请在通知栏解锁）" else "未锁定（单击锁定并穿透点击）",
                         tint = if (locked) MaterialTheme.colorScheme.primary
                         else Color.White.copy(alpha = 0.75f),
                         modifier = Modifier.size(18.dp)
@@ -788,6 +877,29 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                                 }
                             }
                             Spacer(Modifier.height(6.dp))
+                            Text("透明度", fontSize = 13.sp)
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                AppSettings.FLOAT_BG_ALPHA_OPTIONS.forEach { a ->
+                                    FilterChip(
+                                        selected = settings.floatBgAlpha == a,
+                                        onClick = { settings.updateFloatBgAlpha(a) },
+                                        label = {
+                                            Text(
+                                                when (a) {
+                                                    0f -> "透底"
+                                                    1f -> "全黑"
+                                                    else -> "${(a * 100).toInt()}%"
+                                                },
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
                             Text(
                                 text = "关闭悬浮窗",
                                 fontSize = 13.sp,
@@ -842,7 +954,6 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
     }
 
     var tapTimes by remember { mutableStateOf<MutableList<Long>>(mutableListOf()) }
-    val density = LocalDensity.current.density
 
     Column(
         modifier = Modifier
@@ -888,24 +999,29 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
                 .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                 .padding(horizontal = 6.dp, vertical = 2.dp)
                 .pointerInput(Unit) {
+                    // 与词卡相同的「帧间位移累加」方案：只累加 positionChange 的逐帧增量，
+                    // 全程不读实时窗口坐标，避免参考系随窗口移动漂移导致乱飘。
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         var dragging = false
+                        var accX = 0f
+                        var accY = 0f
+                        var targetX = service.windowX().toFloat()
+                        var targetY = service.windowY().toFloat()
                         while (true) {
-                            val event = awaitPointerEvent()
+                            val event = awaitPointerEvent(PointerEventPass.Main)
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             when (event.type) {
                                 PointerEventType.Move -> {
-                                    val total = change.position - down.position
-                                    if (!dragging && (abs(total.x) > 4f || abs(total.y) > 4f)) {
+                                    val d = change.positionChange()
+                                    accX += d.x
+                                    accY += d.y
+                                    if (!dragging && (abs(accX) > 6f || abs(accY) > 6f)) {
                                         dragging = true
                                     }
                                     if (dragging) {
                                         change.consume()
-                                        service.moveTo(
-                                            service.windowX() + (change.position.x - down.position.x) * density,
-                                            service.windowY() + (change.position.y - down.position.y) * density
-                                        )
+                                        service.moveTo(targetX + accX, targetY + accY)
                                     }
                                 }
                                 PointerEventType.Release -> break

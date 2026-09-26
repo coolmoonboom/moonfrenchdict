@@ -22,16 +22,22 @@ import kotlinx.coroutines.withContext
 
 /**
  * 配合页：输入任意法语词（代词/形容词/名词/冠词等），展示该词的阴阳单复全形态，
- * 每个形态尽量带本地例句。所有数据本地生成，不使用 AI。
+ * 每个形态尽量带本地例句。形态表本地生成；底部「动词派生(AI)」另用大模型把动词
+ * 展开成分词 / 动作名词 / 施动者 / 形容词 / 副词的词形网络。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgreementScreen(repository: DictRepository) {
+fun AgreementScreen(repository: DictRepository, aiPrefs: AIPreferences) {
     var query by rememberSaveable { mutableStateOf("") }
     var paradigm by remember { mutableStateOf<AgreementParadigm?>(null) }
     var examples by remember { mutableStateOf<Map<String, Pair<String, String>>>(emptyMap()) }
     var error by remember { mutableStateOf<String?>(null) }
     var notFound by remember { mutableStateOf(false) }
+    // 动词派生（AI）：查到动词时自动预填派生输入框
+    var deriveQuery by rememberSaveable { mutableStateOf("") }
+    var deriveResult by remember { mutableStateOf<VerbDerivationResult?>(null) }
+    var deriveLoading by remember { mutableStateOf(false) }
+    var deriveError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -80,7 +86,36 @@ fun AgreementScreen(repository: DictRepository) {
                 val kind = AgreementData.posKind(entry)
                 paradigm = null
                 notFound = true
-                error = if (kind == "verb") "动词请到「变位」页查看，本页只查阴阳单复数形态。" else "未找到该词的性数配合形态，请检查拼写。"
+                if (kind == "verb") {
+                    // 动词自动预填到下方「动词派生(AI)」输入框
+                    deriveQuery = q.trim()
+                    deriveResult = VerbDerivation.cached(q)
+                }
+                error = if (kind == "verb") "本页上方只查阴阳单复数形态；动词请看下方「动词派生 (AI)」。" else "未找到该词的性数配合形态，请检查拼写。"
+            }
+        }
+    }
+
+    fun doDerive() {
+        val v = deriveQuery.trim()
+        if (v.isBlank() || deriveLoading) return
+        val config = aiPrefs.modelConfig
+        if (!IpaService.isConfigured(config)) {
+            deriveError = "尚未配置 AI 模型，请先在 AI 设置中配置。"
+            return
+        }
+        deriveLoading = true
+        deriveError = null
+        deriveResult = VerbDerivation.cached(v)
+        scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                runCatching { VerbDerivation.generate(config, v) }.getOrNull()
+            }
+            deriveLoading = false
+            if (r == null) {
+                if (deriveResult == null) deriveError = "AI 未能生成派生表，请稍后重试。"
+            } else {
+                deriveResult = r
             }
         }
     }
@@ -181,8 +216,179 @@ fun AgreementScreen(repository: DictRepository) {
                     }
                 }
             }
+
+            // ---- 动词派生（AI）：动词 → 分词 / 动作名词 / 施动者 / 形容词 / 副词 ----
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("动词派生 (AI)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text(
+                            "输入动词原形，AI 展开整张词形网络：现在/过去分词与复合时态、" +
+                                "动作名词（含「le+动词原形」古体与现代派生名词对比）、施动者名词、" +
+                                "形容词（-ant 令人… 对 过去分词 感到…）、副词（-ment）等。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp, bottom = 8.dp)
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SelectableOutlinedTextField(
+                                value = deriveQuery,
+                                onValueChange = { deriveQuery = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("法语动词原形（étudier / finir…）") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                                )
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Button(onClick = { doDerive() }, enabled = !deriveLoading) {
+                                Text(if (deriveLoading) "生成中…" else "生成")
+                            }
+                        }
+                        deriveError?.let { msg ->
+                            Text(
+                                msg,
+                                color = MaterialTheme.colorScheme.error,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            deriveResult?.let { d ->
+                if (d.participePresent.isNotBlank() || d.gerondif.isNotBlank() ||
+                    d.ppMasculin.isNotBlank() || d.exempleComposeFr.isNotBlank()
+                ) {
+                    item { DerivHead("分词与复合时态") }
+                }
+                if (d.participePresent.isNotBlank()) {
+                    item {
+                        SpeakableRow(
+                            d.participePresent,
+                            "现在分词（表主动/进行；可名词化指执行者：l'${d.participePresent} 正在做…的人）",
+                            ""
+                        )
+                    }
+                }
+                if (d.gerondif.isNotBlank()) {
+                    item { SpeakableRow(d.gerondif, "副动词（en + 现在分词，表同时/伴随动作）", "") }
+                }
+                if (d.ppMasculin.isNotBlank()) {
+                    item {
+                        SpeakableRow(
+                            "le ${d.ppMasculin} · la ${d.ppFeminin} · les ${d.ppMasculinPluriel} / ${d.ppFemininPluriel}",
+                            "过去分词（表被动/完成）：做形容词须与所修饰名词性数配合",
+                            "助动词 ${d.auxiliaire}"
+                        )
+                    }
+                }
+                if (d.exempleComposeFr.isNotBlank()) {
+                    item { SpeakableRow(d.exempleComposeFr, d.exempleComposeZh, "复合过去时") }
+                }
+                if (d.exemplePqpFr.isNotBlank()) {
+                    item { SpeakableRow(d.exemplePqpFr, d.exemplePqpZh, "愈过去时") }
+                }
+                if (d.nomsAction.isNotEmpty()) {
+                    item { DerivHead("动词 → 名词（动作/结果名词）") }
+                    items(d.nomsAction) { e -> DerivEntryRow(e) }
+                }
+                if (d.nomsAgent.isNotEmpty()) {
+                    item { DerivHead("动词 → 名词（施动者）") }
+                    items(d.nomsAgent) { e -> DerivEntryRow(e) }
+                }
+                if (d.adjectifs.isNotEmpty()) {
+                    item { DerivHead("动词 → 形容词") }
+                    items(d.adjectifs) { e -> DerivEntryRow(e) }
+                }
+                if (d.adverbes.isNotEmpty()) {
+                    item { DerivHead("动词 → 副词") }
+                    items(d.adverbes) { e -> DerivEntryRow(e) }
+                }
+                if (d.notes.isNotBlank()) {
+                    item {
+                        Text(
+                            "提示：${d.notes}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
+                    }
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun DerivHead(title: String) {
+    Text(
+        title,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+    )
+}
+
+/** 法语行 + 中文行 + 可选用法标签，附朗读按钮。 */
+@Composable
+private fun SpeakableRow(fr: String, zh: String, note: String) {
+    val context = LocalContext.current
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    fr,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f)
+                )
+                if (note.isNotEmpty()) {
+                    Text(
+                        note,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+                IconButton(onClick = {
+                    Speech.ensureInitialized(context)
+                    Speech.speakWithFeedback(context, fr.replace('/', ' ').trim())
+                }, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "朗读 $fr",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            if (zh.isNotEmpty()) {
+                Text(
+                    zh,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DerivEntryRow(e: DerivativeEntry) {
+    val zh = if (e.note.isNotBlank()) "${e.zh}  ·  ${e.note}" else e.zh
+    SpeakableRow(e.form, zh.ifBlank { e.note }, e.label)
 }
 
 @Composable

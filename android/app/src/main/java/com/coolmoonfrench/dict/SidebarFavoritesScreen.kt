@@ -24,6 +24,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SidebarFavoritesScreen(
@@ -77,7 +80,7 @@ fun SidebarFavoritesScreen(
 
         when (tabIndex) {
             0 -> AIFavoritesTab(prefs, onOpen = { selectedFavId = it })
-            1 -> WordFavoritesTab(repository)
+            1 -> WordFavoritesTab(repository, prefs)
             2 -> SentenceFavoritesTab(prefs)
             3 -> VideoTextFavoritesTab(prefs)
         }
@@ -154,11 +157,13 @@ private fun AIFavoritesTab(prefs: AIPreferences, onOpen: (Long) -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun WordFavoritesTab(repository: DictRepository) {
+private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences) {
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
     var selectionMode by remember { mutableStateOf(false) }
     val selected = remember { mutableStateListOf<String>() }
+    var refining by remember { mutableStateOf(false) }
+    val uiScope = rememberCoroutineScope()
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞），同时刷新收藏（词书新增收藏后重进可见）
     LaunchedEffect(Unit) {
@@ -180,8 +185,17 @@ private fun WordFavoritesTab(repository: DictRepository) {
         return
     }
 
+    if (refining) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("整理收藏") },
+            text = { Text("正在把所选 ${selected.size} 个词发给 AI，逐条改写为中/英/音标/例句统一格式…") },
+            confirmButton = {}
+        )
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        // 多选模式顶部操作条：全选 / 复制 / 反选 / 播放 / 移除 / 取消
+        // 多选模式顶部操作条：全选 / 复制 / 整理 / 播放 / 移除 / 取消
         if (selectionMode) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
@@ -206,12 +220,52 @@ private fun WordFavoritesTab(repository: DictRepository) {
                     },
                     enabled = selected.isNotEmpty()
                 ) { Text("复制", fontSize = 13.sp) }
-                TextButton(onClick = {
-                    val all = wordFavs.map { it.word }
-                    val inverted = all.filterNot { selected.contains(it) }
-                    selected.clear()
-                    selected.addAll(inverted)
-                }) { Text("反选", fontSize = 13.sp) }
+                TextButton(
+                    onClick = {
+                        // 整理：把所选词的「原词 + 当前释义」交给 AI，逐条改写成标准中文词条后
+                        // 覆盖写回收藏；AI 未返回中文结果的词保留原义，不做破坏性覆盖。
+                        val config = aiPrefs.modelConfig
+                        if (!IpaService.isConfigured(config)) {
+                            Toast.makeText(context, "尚未配置 AI 模型，请先在 AI 设置中配置", Toast.LENGTH_LONG).show()
+                            return@TextButton
+                        }
+                        val picked = wordFavs.filter { selected.contains(it.word) }
+                        if (picked.isEmpty()) return@TextButton
+                        refining = true
+                        uiScope.launch {
+                            var done = 0
+                            picked.chunked(FavoriteRefiner.CHUNK_SIZE).forEach { chunk ->
+                                val results = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        FavoriteRefiner.refine(config, chunk.map { it.word to it.meaning })
+                                    }.getOrElse { emptyList() }
+                                }
+                                // AI 偶发改写大小写/空格：按小写原词回配收藏键，未命中则用返回词原文。
+                                val keyIndex = chunk.associateBy { it.word.lowercase() }
+                                results.forEach { r ->
+                                    val key = keyIndex[r.word.lowercase()]?.word ?: r.word
+                                    val meaning = ImportWordParser.buildMeaning(r)
+                                    if (meaning.isNotBlank()) {
+                                        repository.addFavorite(key, meaning)
+                                        done++
+                                    }
+                                }
+                            }
+                            refining = false
+                            Toast.makeText(
+                                context,
+                                if (done > 0) "已整理 $done/${picked.size} 个词的中文义项"
+                                else "AI 本次未能整理出有效中文义项",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            if (done > 0) {
+                                wordFavs = repository.loadFavorites()
+                                exitSelection()
+                            }
+                        }
+                    },
+                    enabled = selected.isNotEmpty() && !refining
+                ) { Text(if (refining) "整理中…" else "整理", fontSize = 13.sp) }
                 TextButton(
                     onClick = {
                         // 播放：把所选单词交给悬浮窗，按列表顺序循环播报（与已掌握列表一致）
