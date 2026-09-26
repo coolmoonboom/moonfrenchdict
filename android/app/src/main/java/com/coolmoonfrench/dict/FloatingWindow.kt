@@ -72,6 +72,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -313,11 +314,12 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
     fun windowY(): Int = params?.y ?: 0
 
     /**
-     * 把悬浮窗移动到绝对坐标。
+     * 把悬浮窗移动到绝对坐标（物理像素，`gravity = TOP or START`）。
      *
      * 拖动时不能用「本帧局部位移」累加：窗口会随手指移动，下一帧指针的局部坐标随即
      * 相对新窗口位置回退，于是窗口永远追不上手指（不跟手），并周期性补偿造成抖动。
      * 用绝对定位（当前窗口位置 + 相对按下点的位移）即可消除该反馈。
+     * 注意：Compose 手势给的位移是 dp，调用方须乘 density 换算成像素再传进来。
      */
     fun moveTo(x: Float, y: Float) {
         val p = params ?: return
@@ -456,6 +458,8 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
     var settingsVisible by remember { mutableStateOf(false) }
     var tapTimes by remember { mutableStateOf<MutableList<Long>>(mutableListOf()) }
     val scope = rememberCoroutineScope()
+    // 手指位移与窗口坐标（params.x/y）单位不同：前者为 dp，后者为物理像素，拖动换算必须乘 density。
+    val density = LocalDensity.current.density
 
     // 朗读：切词自动播一次「单词→例句」；单句循环则反复播当前词；
     // 列表循环则播完自动切下一词（切词会重启本效果继续播，形成连续循环）。
@@ -469,7 +473,9 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                 Espeak.speakAwait(ex.fr)
             } else if (FloatingWindowState.revealMeaning) {
                 val meaning = FloatingWindowState.current()?.meaning.orEmpty()
-                if (meaning.isNotBlank()) {
+                // 只有中文释义才用中文语音朗读；英文兜底释义（如词典查无的残缺词）交给中文引擎
+                // 只会读出一串英文，跳过朗读避免误导。
+                if (meaning.isNotBlank() && hasChinese(meaning)) {
                     ChineseTts.ensureInitialized(context)
                     ChineseTts.speakAwait(meaning)
                 }
@@ -523,8 +529,8 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                                         if (dragging) {
                                             change.consume()
                                             service.moveTo(
-                                                service.windowX() + (change.position.x - down.position.x),
-                                                service.windowY() + (change.position.y - down.position.y)
+                                                service.windowX() + (change.position.x - down.position.x) * density,
+                                                service.windowY() + (change.position.y - down.position.y) * density
                                             )
                                         }
                                     }
@@ -827,6 +833,7 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
     }
 
     var tapTimes by remember { mutableStateOf<MutableList<Long>>(mutableListOf()) }
+    val density = LocalDensity.current.density
 
     Column(
         modifier = Modifier
@@ -887,8 +894,8 @@ private fun FloatingSubtitleWindow(service: FloatingWindowService) {
                                     if (dragging) {
                                         change.consume()
                                         service.moveTo(
-                                            service.windowX() + (change.position.x - down.position.x),
-                                            service.windowY() + (change.position.y - down.position.y)
+                                            service.windowX() + (change.position.x - down.position.x) * density,
+                                            service.windowY() + (change.position.y - down.position.y) * density
                                         )
                                     }
                                 }
