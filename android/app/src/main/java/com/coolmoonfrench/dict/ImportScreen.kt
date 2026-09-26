@@ -51,6 +51,8 @@ object ImportWordParser {
             return emptyList()
         }
         return parse(reply)
+            .filter { hasChinese(it.meaning) }
+            .map { it.copy(pos = normalizePos(it.pos)) }
     }
 
     /**
@@ -197,10 +199,35 @@ object ImportWordParser {
         }
     }
 
+    /** 词性英文写法归一为标准缩写，杜绝【verb】这类英文标记进收藏。 */
+    internal fun normalizePos(pos: String): String {
+        val p = pos.trim().removePrefix("【").removeSuffix("】").trim()
+        if (p.isEmpty()) return ""
+        val key = p.lowercase().replace(".", "").replace("·", "")
+        return when (key) {
+            "verb", "verbs", "verbe", "v", "vir", "vt", "vi", "vpr", "vimp" -> "v."
+            "noun", "noms", "nom" -> "n."
+            "adjective", "adjectifs", "adjectif", "adj" -> "adj."
+            "adverb", "adverbs", "adverbe", "adv" -> "adv."
+            "pronoun", "pronoms", "pronom", "pron" -> "pron."
+            "preposition", "prepositions", "prep" -> "prep."
+            "conjunction", "conjonction", "conj" -> "conj."
+            "interjection", "interjections", "interj" -> "interj."
+            "article", "articles", "art" -> "art."
+            "participle", "participles", "participe" -> "v."
+            "contraction", "contractions", "contract" -> "contraction"
+            "prefix", "prefixes", "pref" -> "préf."
+            "suffix", "suffixes", "suff" -> "suff."
+            "numeral", "numeraux", "num" -> "num."
+            "expression", "locution", "loc" -> "loc."
+            else -> p
+        }
+    }
+
     /** 组装收藏展示用释义：词性 + 中文释义 + 音标 + 例句 + 中文例句。 */
     fun buildMeaning(w: ImportedWord): String {
         val sb = StringBuilder()
-        val pos = w.pos.trim().removePrefix("【").removeSuffix("】")
+        val pos = normalizePos(w.pos)
         if (pos.isNotEmpty() || w.meaning.isNotBlank()) {
             sb.append(if (pos.isNotEmpty()) "【$pos】" else "").append(w.meaning.trim())
         }
@@ -214,37 +241,50 @@ object ImportWordParser {
 /** 收藏批量整理：把「单词 + 旧释义」交给 AI 统一改写为标准中文词条格式。 */
 object FavoriteRefiner {
 
-    /** 单次 AI 调用的词条数，控制上下文规模、避免长输出被截断。 */
-    const val CHUNK_SIZE = 12
+    /** 单次 AI 调用的词条数；批次小才不容易被模型偷懒或截断。 */
+    const val CHUNK_SIZE = 10
 
-    /** 返回整理好的词条；调用方按返回的 word 与原收藏匹配写回。无配置/失败返回空。 */
+    /** 一批最多尝试次数：模型偶尔整批返回英文/空结果，自动重试一次。 */
+    private const val MAX_ATTEMPTS = 2
+
+    /** 返回整理好的词条（义项必为中文）；调用方按返回的 word 与原收藏匹配写回。 */
     suspend fun refine(config: AIModelConfig, words: List<Pair<String, String>>): List<ImportedWord> {
         if (words.isEmpty() || !IpaService.isConfigured(config)) return emptyList()
         val list = words.joinToString("\n") { (w, m) -> "$w\t$m" }
-        val reply = try {
-            AIClient.chat(config, listOf(AIMessage("user", buildPrompt(list))))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            return emptyList()
+        repeat(MAX_ATTEMPTS) { attempt ->
+            val reply = try {
+                AIClient.chat(config, listOf(AIMessage("user", buildPrompt(list, attempt > 0))))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return@repeat
+            }
+            // 义项必须是中文才算有效；全英文回声/半成品直接丢弃并触发重试。
+            val usable = ImportWordParser.parse(reply)
+                .filter { hasChinese(it.meaning) }
+                .map { it.copy(pos = ImportWordParser.normalizePos(it.pos)) }
+            if (usable.isNotEmpty()) return usable
         }
-        // 只保留义项确为中文的结果：个别条目没整理好就保留原义，不做破坏性覆盖。
-        return ImportWordParser.parse(reply).filter { hasChinese(it.meaning) }
+        return emptyList()
     }
 
-    private fun buildPrompt(list: String): String = """
+    private fun buildPrompt(list: String, retry: Boolean): String = """
         你是法语词典编辑。下面是用户收藏里的「单词<TAB>当前释义」清单，
-        部分释义是英文、速记或格式杂乱，请逐条改写成统一的中文标准词条。
-        清单内容：
+        释义可能是英文、词形标记、速记或格式杂乱。请把每一条改写成统一格式的中文词条。
+        ${if (retry) "注意：上一次你输出了英文释义，被整批拒绝了。这次 meaning 里一个英文句子都不许出现。\n" else ""}清单内容：
         $list
-        要求：
-        1. 只输出一个 JSON 数组，不要任何解释，不要代码块标记。
-        2. 每个元素格式：
-           {"word":"与输入单词逐字一致","pos":"词性简称(n.m. n.f. adj. v.t. v.i. adv. v.phr. contraction 等)","ipa":"/标准IPA音标/","meaning":"简洁中文释义(必须是中文)","example":"含该词的地道法语例句","example_zh":"例句的中文翻译"}
-        3. word 原样保留输入内容：短语（如 aller faire）、缩合（如 Qu'on）都要原样保留，禁止改写成单个动词原形。
-        4. meaning 必须是中文；原义是英文的准确翻译过来，禁止臆造。
-        5. 无法给出可靠例句时 example 与 example_zh 留空字符串。
-        6. 输入每行输出一条，顺序与输入一致，不要合并、删减或新增。
+        【输出格式】只输出一个 JSON 数组，不要解释、不要代码块标记。每个元素：
+        {"word":"与输入单词逐字一致","pos":"词性","ipa":"/标准IPA/","meaning":"中文释义","example":"地道法语例句","example_zh":"例句中文翻译"}
+        【统一规范】
+        1. meaning 必须是简体中文（法语例证词可夹用），格式：核心释义；有补充再写「；短语：…；备注：…」。
+           禁止输出英文释义整句，禁止把输入的英文原文照抄回来。
+        2. pos 只能用这些标准缩写：n.m. n.f. v.t. v.i. v. adj. adv. loc.adv. loc.verb. loc. pron.
+           prep. conj. interj. art. num. contraction préf. suff.；禁止 verb、noun、adjective 等英文写法。
+        3. 输入若是变位/分词等形式（如 Ferais、émis），word 保持输入原样，
+           meaning 开头先说明词形来源再给中文义，例：「faire 的现在条件式第一/二人称单数：会做、做」。
+        4. 输入里已有的中文说明与备注（魁北克口语、用法括注等）必须完整保留进 meaning。
+        5. 输入每行输出一条、顺序一致，一单词不落；无法给出可靠例句时
+           example 与 example_zh 留空字符串。
     """.trimIndent()
 }
 

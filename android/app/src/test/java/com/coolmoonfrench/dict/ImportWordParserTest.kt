@@ -120,4 +120,22 @@ class ImportWordParserTest {
         assertEquals("v.t.", w.pos)
         assertEquals("/ban/", w.ipa)
     }
+
+    @Test
+    fun `normalizePos maps english parts of speech and keeps standard ones`() {
+        assertEquals("v.", ImportWordParser.normalizePos("verb"))
+        assertEquals("v.", ImportWordParser.normalizePos("Verb."))
+        assertEquals("n.m.", ImportWordParser.normalizePos("n.m."))
+        assertEquals("adj.", ImportWordParser.normalizePos("adjective"))
+        assertEquals("interj.", ImportWordParser.normalizePos("interj"))
+        assertEquals("感叹词", ImportWordParser.normalizePos("感叹词"))
+        assertEquals("", ImportWordParser.normalizePos("  "))
+    }
+
+    @Test
+    fun `buildMeaning normalizes english pos inside brackets`() {
+        val w = ImportedWord("Ferais", "verb", "", "faire 的现在条件式第一/二人称单数：会做", "", "")
+        val m = ImportWordParser.buildMeaning(w)
+        assertTrue(m.startsWith("【v.】faire 的现在条件式"))
+    }
 }
