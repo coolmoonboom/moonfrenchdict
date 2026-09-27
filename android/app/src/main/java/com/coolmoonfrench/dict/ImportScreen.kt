@@ -165,6 +165,10 @@ object ImportWordParser {
            l'objectif、la chaîne、à chaque fois que、tomber sur qqn、pas trop de la team
            这类带冠词或介词的短语一律照原样，不得改写、拆分、合并或去掉冠词；
            动词变位形式才还原为不定式原形。
+        3a. 输入可能带残缺或错误拼写（漏重音符号如 etre、字母错位或多余如 apercevoire、
+            省音号缺失如 l objectif、大小写混乱等）：先结合上下文推断还原为正确的词头
+            再产出词条，word 填还原后的规范写法；动词残缺拼写还要还原为不定式原形。
+            无法确信还原、或更像人名/外来词的内容直接跳过，不要为猜测输出低置信词条。
         4. 若输入已给出词性和中文释义（含括注、魁北克用法备注等），原义必须完整保留进
            meaning，你负责补全缺失的词性、音标、例句；不要丢备注信息。
            若给出的释义是英文（如 "to raise; to recover" 或 "inflection of relever:

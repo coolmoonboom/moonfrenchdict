@@ -27,7 +27,7 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AgreementScreen(repository: DictRepository, aiPrefs: AIPreferences) {
+fun AgreementScreen(repository: DictRepository, conjugator: VerbConjugator, aiPrefs: AIPreferences) {
     var query by rememberSaveable { mutableStateOf("") }
     var paradigm by remember { mutableStateOf<AgreementParadigm?>(null) }
     var examples by remember { mutableStateOf<Map<String, Pair<String, String>>>(emptyMap()) }
@@ -108,8 +108,14 @@ fun AgreementScreen(repository: DictRepository, aiPrefs: AIPreferences) {
         deriveError = null
         deriveResult = VerbDerivation.cached(v)
         scope.launch {
+            // 输入可以是动词的任意形态（变位/分词/屈折）：先经本地变位表还原词头，
+            // 同一动词的各种写法共享同一份派生表；还原不了则原样交给 AI 容错。
+            val base = withContext(Dispatchers.IO) {
+                runCatching { conjugator.findInfinitive(v) }.getOrNull()
+            } ?: v
+            if (deriveResult == null) deriveResult = VerbDerivation.cached(base)
             val r = withContext(Dispatchers.IO) {
-                runCatching { VerbDerivation.generate(config, v) }.getOrNull()
+                runCatching { VerbDerivation.generate(config, base) }.getOrNull()
             }
             deriveLoading = false
             if (r == null) {

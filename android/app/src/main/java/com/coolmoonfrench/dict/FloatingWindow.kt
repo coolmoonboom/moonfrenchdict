@@ -528,8 +528,13 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         }
     }
     // 本地语料没有例句时，回退用收藏释义里 AI 生成的例句。
-    val shownExample = example
-        ?: parsed.exampleFr.takeIf { it.isNotBlank() }?.let { it to parsed.exampleZh }
+    // 语料例句是异步查的，开始朗读那一刻可能还没到位，故朗读链里现场取最新值。
+    val currentExample: () -> Pair<String, String>? = {
+        example
+            ?: parsed.exampleFr.takeIf { it.isNotBlank() }?.let { it to parsed.exampleZh }
+    }
+    val shownExample = currentExample()
+    var exampleWaitedFor by remember(word) { mutableStateOf("") }
 
     // 锁定状态 / 设置面板（锁定提升到全局状态：配合通知栏解锁动作）
     val locked = FloatingWindowState.locked
@@ -553,7 +558,17 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         if (word.isEmpty() || FloatingWindowState.paused) return@LaunchedEffect
         while (true) {
             Espeak.speakAwait(word, deterministic = true)
-            val ex = shownExample
+            var ex = currentExample()
+            if (ex == null && exampleWaitedFor != word) {
+                // 语料例句往往比词头晚到一拍：等它最多 2 秒补读；确认没有则不再空等
+                exampleWaitedFor = word
+                var waited = 0L
+                while (ex == null && waited < 2000L) {
+                    delay(200L)
+                    waited += 200L
+                    ex = currentExample()
+                }
+            }
             if (ex != null && ex.first.isNotBlank()) {
                 Espeak.speakAwait(ex.first)
             }
