@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -324,7 +325,7 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
         ) {
-            items(wordFavs, key = { it.word }) { entry ->
+            itemsIndexed(wordFavs, key = { index, entry -> entry.word + "#" + index }) { _, entry ->
                 val isSelected = selected.contains(entry.word)
                 Card(
                     modifier = Modifier
