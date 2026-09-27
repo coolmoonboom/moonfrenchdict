@@ -125,7 +125,15 @@ object ChineseTts {
             done = null
             return
         }
-        val finished = withTimeoutOrNull(SPEAK_TIMEOUT_MS) { d.await() }
+        val finished = try {
+            withTimeoutOrNull(SPEAK_TIMEOUT_MS) { d.await() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 切词/暂停取消协程时平台引擎仍在出声：先停止再传播取消，
+            // 否则旧词中文会与下一词的法语语音叠加。
+            runCatching { engine.stop() }
+            done = null
+            throw e
+        }
         done = null
         if (finished == null) {
             // 中文解释过长超出超时仍在朗读：主动停止，避免与下一个单词的法语语音叠加。

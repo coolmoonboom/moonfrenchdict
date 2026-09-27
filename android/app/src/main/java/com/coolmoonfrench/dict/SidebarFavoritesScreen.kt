@@ -189,7 +189,7 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
         AlertDialog(
             onDismissRequest = { },
             title = { Text("整理收藏") },
-            text = { Text("正在把所选 ${selected.size} 个词发给 AI，逐条改写为中/英/音标/例句统一格式…") },
+            text = { Text("正在获取内容…（${selected.size} 个词）") },
             confirmButton = {}
         )
     }

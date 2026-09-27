@@ -513,6 +513,8 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
     val settings = remember { AppSettings(context.applicationContext) }
     val entry = FloatingWindowState.current()
     val word = entry?.word.orEmpty()
+    // AI 整理/导入的收藏把音标、例句、例句翻译都编码在释义文本里，展示与朗读前先拆结构。
+    val parsed = remember(entry?.meaning) { FavoriteMeaning.parse(entry?.meaning.orEmpty()) }
 
     var example by remember(word) {
         mutableStateOf<Pair<String, String>?>(null)
@@ -523,6 +525,9 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
             VocabExamples.lookup(context, word)?.let { it.fr to it.zh }
         }
     }
+    // 本地语料没有例句时，回退用收藏释义里 AI 生成的例句。
+    val shownExample = example
+        ?: parsed.exampleFr.takeIf { it.isNotBlank() }?.let { it to parsed.exampleZh }
 
     // 锁定状态 / 设置面板（锁定提升到全局状态：配合通知栏解锁动作）
     val locked = FloatingWindowState.locked
@@ -538,23 +543,23 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         if (locked) settingsVisible = false
     }
 
-    // 朗读：切词自动播一次「单词→例句」；单句循环则反复播当前词；
+    // 朗读：切词自动播一次「单词→例句→中文释义」；单句循环则反复播当前词；
     // 列表循环则播完自动切下一词（切词会重启本效果继续播，形成连续循环）。
-    // 收藏词（revealMeaning）无本地例句时，改读该词的中文释义。
+    // 法文（单词/例句）永远走法语引擎，中文（义项）永远走中文引擎且只读汉字，
+    // 词性括号等非中文字符不发音。
     LaunchedEffect(word, FloatingWindowState.loopOne, FloatingWindowState.listLoop, FloatingWindowState.paused, FloatingWindowState.revealMeaning) {
         if (word.isEmpty() || FloatingWindowState.paused) return@LaunchedEffect
         while (true) {
             Espeak.speakAwait(word, deterministic = true)
-            val ex = withContext(Dispatchers.IO) { VocabExamples.lookup(context, word) }
-            if (ex != null) {
-                Espeak.speakAwait(ex.fr)
-            } else if (FloatingWindowState.revealMeaning) {
-                val meaning = FloatingWindowState.current()?.meaning.orEmpty()
-                // 只有中文释义才用中文语音朗读；英文兜底释义（如词典查无的残缺词）交给中文引擎
-                // 只会读出一串英文，跳过朗读避免误导。
-                if (meaning.isNotBlank() && hasChinese(meaning)) {
+            val ex = shownExample
+            if (ex != null && ex.first.isNotBlank()) {
+                Espeak.speakAwait(ex.first)
+            }
+            if (FloatingWindowState.revealMeaning) {
+                val zh = FavoriteMeaning.chineseForSpeech(parsed.zh)
+                if (zh.isNotBlank()) {
                     ChineseTts.ensureInitialized(context)
-                    ChineseTts.speakAwait(meaning)
+                    ChineseTts.speakAwait(zh)
                 }
             }
             if (FloatingWindowState.loopOne) continue
@@ -659,11 +664,15 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                     )
                     if (word.isNotEmpty()) {
                         Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = FrenchIpa.wrap(word),
-                            fontSize = (13 * settings.floatFontScale).sp,
-                            color = Color.White.copy(alpha = 0.8f)
-                        )
+                        // 收藏里 AI 生成的音标优先，本地音标推导兜底。
+                        val ipaShown = parsed.ipa.ifBlank { FrenchIpa.wrap(word) }
+                        if (ipaShown.isNotEmpty()) {
+                            Text(
+                                text = ipaShown,
+                                fontSize = (13 * settings.floatFontScale).sp,
+                                color = Color.White.copy(alpha = 0.8f)
+                            )
+                        }
                     }
                     Spacer(Modifier.weight(1f))
                     if (word.isNotEmpty()) {
@@ -679,29 +688,31 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
                         }
                     }
                 }
-                example?.let { ex ->
+                if (FloatingWindowState.revealMeaning) {
+                    // 义项行只显示「词性 + 中文」，排在例句上方；音标/例句标签等
+                    // 结构化文本不再原样铺开。
+                    val gloss = parsed.gloss()
+                    if (gloss.isNotBlank()) {
+                        Text(
+                            text = gloss,
+                            fontSize = (13 * settings.floatFontScale).sp,
+                            lineHeight = 18.sp,
+                            color = Color.White.copy(alpha = 0.9f)
+                        )
+                    }
+                }
+                shownExample?.let { ex ->
                     Text(
                         text = ex.first,
                         fontSize = (14 * settings.floatFontScale).sp,
                         lineHeight = 20.sp,
                         color = Color.White
                     )
-                    if (settings.floatShowTranslation) {
+                    if (settings.floatShowTranslation && ex.second.isNotBlank()) {
                         Text(
                             text = ex.second,
                             fontSize = (12 * settings.floatFontScale).sp,
                             color = Color.White.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-                if (FloatingWindowState.revealMeaning) {
-                    val meaning = entry?.meaning.orEmpty()
-                    if (meaning.isNotBlank()) {
-                        Text(
-                            text = meaning,
-                            fontSize = (13 * settings.floatFontScale).sp,
-                            lineHeight = 18.sp,
-                            color = Color.White.copy(alpha = 0.9f)
                         )
                     }
                 }

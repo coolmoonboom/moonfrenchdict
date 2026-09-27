@@ -51,7 +51,8 @@ object ImportWordParser {
             return emptyList()
         }
         return parse(reply)
-            .filter { hasChinese(it.meaning) }
+            // 剔除整句英文的词典回声释义（含零星汉字也算英文主导）。
+            .filter { FavoriteMeaning.chineseDominant(it.meaning) }
             .map { it.copy(pos = normalizePos(it.pos)) }
     }
 
@@ -259,9 +260,9 @@ object FavoriteRefiner {
             } catch (e: Exception) {
                 return@repeat
             }
-            // 义项必须是中文才算有效；全英文回声/半成品直接丢弃并触发重试。
+            // 义项必须中文为主才有效；英文主导（含零星汉字）的词典回声丢弃并触发重试。
             val usable = ImportWordParser.parse(reply)
-                .filter { hasChinese(it.meaning) }
+                .filter { FavoriteMeaning.chineseDominant(it.meaning) }
                 .map { it.copy(pos = ImportWordParser.normalizePos(it.pos)) }
             if (usable.isNotEmpty()) return usable
         }
@@ -301,7 +302,7 @@ fun ImportScreen(
     var content by remember { mutableStateOf("") }
     var words by remember { mutableStateOf<List<ImportedWord>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
-    var loadingText by remember { mutableStateOf("AI 正在识别词条…") }
+    var loadingText by remember { mutableStateOf("正在获取内容…") }
     var error by remember { mutableStateOf<String?>(null) }
     var recognized by remember { mutableStateOf(false) }
     val config = prefs.modelConfig
@@ -326,9 +327,9 @@ fun ImportScreen(
             var failedChunks = 0
             chunks.forEachIndexed { i, chunk ->
                 loadingText = if (chunks.size > 1) {
-                    "AI 正在识别 第 ${i + 1}/${chunks.size} 批…"
+                    "正在获取内容 第 ${i + 1}/${chunks.size} 批…"
                 } else {
-                    "AI 正在识别词条…"
+                    "正在获取内容…"
                 }
                 val result = withContext(Dispatchers.IO) {
                     runCatching { ImportWordParser.recognize(config, chunk) }
