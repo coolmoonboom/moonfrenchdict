@@ -32,13 +32,15 @@ import kotlinx.coroutines.launch
 @Composable
 fun AISettingsScreen(
     prefs: AIPreferences,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    batch: Boolean = false
 ) {
-    var interfaceType by remember { mutableStateOf(prefs.modelConfig.interfaceType) }
-    var apiUrl by remember { mutableStateOf(prefs.modelConfig.apiUrl) }
-    var apiToken by remember { mutableStateOf(prefs.modelConfig.apiToken) }
-    var modelName by remember { mutableStateOf(prefs.modelConfig.modelName) }
-    var notes by remember { mutableStateOf(prefs.modelConfig.notes) }
+    val baseConfig = if (batch) prefs.batchModelConfig else prefs.modelConfig
+    var interfaceType by remember { mutableStateOf(baseConfig.interfaceType) }
+    var apiUrl by remember { mutableStateOf(baseConfig.apiUrl) }
+    var apiToken by remember { mutableStateOf(baseConfig.apiToken) }
+    var modelName by remember { mutableStateOf(baseConfig.modelName) }
+    var notes by remember { mutableStateOf(baseConfig.notes) }
     var showToken by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
@@ -265,7 +267,7 @@ fun AISettingsScreen(
                             val cfg = AIModelConfig(interfaceType, apiUrl, apiToken, modelName, notes)
                             // 验证：拉取模型列表测试连通性
                             AIClient.listModels(cfg)
-                            prefs.modelConfig = cfg
+                            if (batch) prefs.batchModelConfig = cfg else prefs.modelConfig = cfg
                             onBack()
                         } catch (e: Exception) {
                             errorMsg = "验证失败：${e.message?.take(100) ?: "未知错误"}。请检查配置后重试。"

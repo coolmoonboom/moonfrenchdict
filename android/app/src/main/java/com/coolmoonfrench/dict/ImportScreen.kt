@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -80,6 +81,23 @@ object ImportWordParser {
     }
 
     /** 同一词的多次识别合并：保留义项更完整的一条。 */
+    private val chineseRe = Regex("[\\u4e00-\\u9fff]")
+    private val frWordRe = Regex("^[A-Za-zÀ-ÿŒœ][A-Za-zÀ-ÿŒœ'’\\-]*$")
+
+    /** 估算文本中法语词/词组个数（查词页 >50 词转批量导入的判定依据）。 */
+    fun countImportableFrenchWords(text: String): Int {
+        var n = 0
+        for (raw in text.lines()) {
+            val line = raw.replaceFirst(Regex("^\\s*\\d+\\s*[.、)：:]*\\s*"), "")
+            if (chineseRe.containsMatchIn(line)) continue
+            for (tok in line.split(Regex("\\s+"))) {
+                val w = tok.trim { it in ".,;:!?«»\"'()[]、。" }
+                if (w.length >= 2 && frWordRe.matches(w)) n++
+            }
+        }
+        return n
+    }
+
     internal fun merge(words: List<ImportedWord>): List<ImportedWord> {
         val map = LinkedHashMap<String, ImportedWord>()
         words.forEach { w ->
@@ -328,17 +346,19 @@ fun ImportScreen(
     prefs: AIPreferences,
     repository: DictRepository,
     onBack: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    initialWord: String = ""
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
-    var content by remember { mutableStateOf("") }
+    var content by remember { mutableStateOf(initialWord) }
+    var selected by remember { mutableStateOf(emptySet<Int>()) }
     var words by remember { mutableStateOf<List<ImportedWord>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var loadingText by remember { mutableStateOf("正在获取内容…") }
     var error by remember { mutableStateOf<String?>(null) }
     var recognized by remember { mutableStateOf(false) }
-    val config = prefs.modelConfig
+    val config = prefs.effectiveBatchConfig
     val configured = IpaService.isConfigured(config)
 
     BackHandler { onBack() }
@@ -376,6 +396,7 @@ fun ImportScreen(
                 error = "AI 未能识别出有效词条，请检查粘贴内容或稍后重试。"
             } else {
                 words = result
+                selected = result.indices.toSet()
                 recognized = true
                 if (failedChunks > 0 && chunks.size > 1) {
                     error = "有 $failedChunks/${chunks.size} 批识别失败，其余 ${result.size} 个词条已列出，可再次识别补全。"
@@ -385,8 +406,11 @@ fun ImportScreen(
     }
 
     fun doImport() {
-        val good = words.filter { it.word.isNotBlank() }
-        if (good.isEmpty()) return
+        val good = words.filterIndexed { i, w -> w.word.isNotBlank() && i in selected }
+        if (good.isEmpty()) {
+            Toast.makeText(context, "请先勾选要导入的词条", Toast.LENGTH_SHORT).show()
+            return
+        }
         var count = 0
         good.forEach { w ->
             val word = w.word.trim()
@@ -483,22 +507,42 @@ fun ImportScreen(
 
             if (recognized && words.isNotEmpty()) {
                 item {
-                    Text(
-                        "识别到 ${words.size} 个词条，可直接修改后导入：",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(vertical = 6.dp)
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "识别到 ${words.size} 个词条，勾选后可修改并导入：",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                            TextButton(onClick = { selected = words.indices.toSet() }) { Text("全选") }
+                            TextButton(onClick = { selected = emptySet() }) { Text("清空") }
+                        }
+                    }
                 }
-                items(words) { w ->
-                    ImportedWordCard(w)
+                itemsIndexed(words) { idx, w ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = idx in selected,
+                            onCheckedChange = { on ->
+                                selected = if (on) selected + idx else selected - idx
+                            }
+                        )
+                        Box(modifier = Modifier.weight(1f)) {
+                            ImportedWordCard(w)
+                        }
+                    }
                 }
                 item {
                     Button(
                         onClick = ::doImport,
+                        enabled = selected.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
                     ) {
-                        Text("导入到收藏-单词")
+                        Text("导入到收藏-单词（已选 ${selected.size}）")
                     }
                 }
             }
@@ -575,4 +619,28 @@ private fun ImportedWordCard(w: ImportedWord) {
             )
         }
     }
+}
+
+/** 查词页 >50 词转接的直连批量导入：分批识别 → 合并 → 直接写入收藏，返回导入条数。 */
+suspend fun runBatchImport(
+    config: AIModelConfig,
+    text: String,
+    repository: DictRepository,
+    onProgress: (String) -> Unit = {}
+): Int = withContext(Dispatchers.IO) {
+    val chunks = ImportWordParser.chunkLines(text)
+    val collected = mutableListOf<ImportedWord>()
+    chunks.forEachIndexed { i, chunk ->
+        onProgress(if (chunks.size > 1) "批量识别第 ${i + 1}/${chunks.size} 批…" else "批量识别中…")
+        collected += runCatching { ImportWordParser.recognize(config, chunk) }.getOrElse { emptyList() }
+    }
+    var n = 0
+    ImportWordParser.merge(collected).forEach { w ->
+        val word = w.word.trim()
+        if (word.isNotEmpty()) {
+            repository.addFavorite(word, ImportWordParser.buildMeaning(w))
+            n++
+        }
+    }
+    n
 }

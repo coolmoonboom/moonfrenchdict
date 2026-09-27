@@ -37,7 +37,21 @@ object AsrModelManager {
         data class Failed(val message: String) : State()
         object Installing : State()
         object Ready : State()
+        data class Paused(val percent: Int) : State()
     }
+
+    /** 暂停信号：读循环抛出，保留半截文件供续传 */
+    class PausedSignal : IOException("下载已暂停")
+
+    @Volatile
+    private var paused = false
+
+    /** 请求暂停当前下载（手动按钮或界面退后台时调用）；再次开始下载即续传。 */
+    fun pauseDownload() {
+        paused = true
+    }
+
+    fun pauseRequested(): Boolean = paused
 
     private const val PREF = "video_text"
     private const val K_ENGINE = "asr_engine_v1"
@@ -165,11 +179,13 @@ object AsrModelManager {
 
     suspend fun downloadFr(context: Context, onState: (State) -> Unit) = withContext(Dispatchers.IO) {
         val zip = cacheFile(context, FR_ZIP_NAME)
+        var lastPct = 0
         try {
+            paused = false
             onState(State.Downloading(0, 0, 0))
-            httpDownload(FR_ZIP_URL, zip, 0L) { read, total ->
-                val pct = if (total > 0) ((read * 100) / total).toInt().coerceIn(0, 100) else 0
-                onState(State.Downloading(pct, read, total))
+            httpDownload(FR_ZIP_URL, zip, zip.length()) { read, total ->
+                lastPct = if (total > 0) ((read * 100) / total).toInt().coerceIn(0, 100) else 0
+                onState(State.Downloading(lastPct, read, total))
             }
             onState(State.Installing)
             val dest = frDir(context)
@@ -183,13 +199,18 @@ object AsrModelManager {
             onState(State.Ready)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            onState(State.Failed(e.message ?: "下载失败"))
+            if (e is PausedSignal || paused) {
+                paused = false
+                onState(State.Paused(lastPct))
+            } else onState(State.Failed(e.message ?: "下载失败"))
         }
     }
 
     suspend fun downloadWhisper(context: Context, onState: (State) -> Unit) = withContext(Dispatchers.IO) {
         val dir = whisperDir(context).apply { mkdirs() }
+        var lastPct = 0
         try {
+            paused = false
             var doneBase = 0L
             for ((index, f) in WHISPER_FILES.withIndex()) {
                 coroutineContext.ensureActive()
@@ -206,13 +227,14 @@ object AsrModelManager {
                         httpDownload(url, target, target.length()) { read, total ->
                             val overall = doneBase + read
                             val totalAll = doneBase + if (total > 0) total else f.approxSize
-                            val pct = if (totalAll > 0) ((overall * 100) / totalAll).toInt().coerceIn(0, 100) else 0
-                            onState(State.Downloading(pct, overall, totalAll))
+                            lastPct = if (totalAll > 0) ((overall * 100) / totalAll).toInt().coerceIn(0, 100) else 0
+                            onState(State.Downloading(lastPct, overall, totalAll))
                         }
                         ok = true
                         break
                     } catch (e: Exception) {
                         if (e is kotlinx.coroutines.CancellationException) throw e
+                        if (e is PausedSignal) throw e
                         lastErr = e
                         // 换源时保留已下部分仅在源支持 Range 时成立；对断点续传失败的源直接重下
                     }
@@ -224,7 +246,10 @@ object AsrModelManager {
             onState(State.Ready)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            onState(State.Failed(e.message ?: "下载失败"))
+            if (e is PausedSignal || paused) {
+                paused = false
+                onState(State.Paused(lastPct))
+            } else onState(State.Failed(e.message ?: "下载失败"))
         }
     }
 
@@ -244,6 +269,7 @@ object AsrModelManager {
                 return
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
+                if (e is PausedSignal) throw e
                 lastErr = e
                 kotlinx.coroutines.delay(2000L * attempt)
             }
@@ -279,6 +305,7 @@ object AsrModelManager {
                     var lastUi = 0L
                     while (true) {
                         coroutineContext.ensureActive()
+                        if (paused) throw PausedSignal()
                         val n = input.read(buf)
                         if (n < 0) break
                         out.write(buf, 0, n)

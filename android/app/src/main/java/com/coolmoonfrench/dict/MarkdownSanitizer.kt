@@ -14,6 +14,7 @@ object MarkdownSanitizer {
      */
     fun sanitize(md: String): String {
         if (md.isBlank()) return md
+        val md = fixCjkBold(md)
         val lines = md.split("\n")
         val out = mutableListOf<String>()
         var inCodeFence = false
@@ -96,4 +97,42 @@ object MarkdownSanitizer {
         val cols = if (columns >= 1) columns else 1
         return (1..cols).joinToString("|", prefix = "|", postfix = "|") { "---" }
     }
+
+    private val boldTailPunct = Pattern.compile("\\*\\*([^*\\n]+?)([：:；;，,。.、！!？?）)】」』”])\\*\\*")
+    private val boldHeadPunct = Pattern.compile("\\*\\*([（(「【“'])([^*\\n]+?)\\*\\*")
+
+    /**
+     * 修复 CommonMark 加粗定界规则在中文语境下失效的问题：
+     * `**释义：**` 的闭合星号因紧邻全角标点无法闭合、`**（植物）嫁接**` 的开星号同理，
+     * 渲染器会原样输出星号。统一把标点移到星号外侧保住加粗语义。
+     */
+    fun fixCjkBold(md: String): String {
+        var out = md
+        // 反复处理嵌套（如 **a**b**：**）直到不再命中
+        while (true) {
+            val n1 = boldTailPunct.matcher(out).replaceAll("**$1**$2")
+            val n2 = boldHeadPunct.matcher(n1).replaceAll("$1**$2**")
+            if (n2 == out) return out
+            out = n2
+        }
+    }
+
+    private val previewLink = Pattern.compile("\\[([^\\]]*)\\]\\([^)]*\\)")
+
+    /** 列表预览专用：剥离 Markdown 标记得到纯净可读文本（不影响原文）。 */
+    fun previewPlain(md: String): String {
+        var s = fixCjkBold(md)
+        s = previewLink.matcher(s).replaceAll("$1")
+        s = s.replace("\\*", "").replace("`", "")
+        val out = StringBuilder()
+        for (line in s.split("\n")) {
+            val l = line.trimStart()
+                .replaceFirst(Regex("^#{1,6}\\s*"), "")
+                .replaceFirst(Regex("^>+\\s*"), "")
+                .replaceFirst(Regex("^[-*+]\\s+"), "· ")
+            out.append(if (l.startsWith("|")) l.replace("|", " ").trim() else l).append('\n')
+        }
+        return out.toString().replace(Regex("\n{2,}"), "\n").trim()
+    }
+
 }

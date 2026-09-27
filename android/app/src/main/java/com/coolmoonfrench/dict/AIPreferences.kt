@@ -212,6 +212,43 @@ class AIPreferences(context: Context) {
             ).apply()
         }
 
+    /** 「AI 查词 + 批量导入」专用配置，与全局「AI 模型」彼此独立。 */
+    var batchModelConfig: AIModelConfig
+        get() {
+            val json = prefs.getString("model_config_batch", null) ?: return AIModelConfig()
+            return try {
+                val o = JSONObject(json)
+                AIModelConfig(
+                    interfaceType = o.optString("interface_type", AIInterfaceType.OPENAI_CHAT),
+                    apiUrl = o.optString("api_url", ""),
+                    apiToken = o.optString("api_token", ""),
+                    modelName = o.optString("model_name", ""),
+                    notes = o.optString("notes", "")
+                )
+            } catch (e: Exception) {
+                AIModelConfig()
+            }
+        }
+        set(value) {
+            prefs.edit().putString(
+                "model_config_batch",
+                JSONObject().apply {
+                    put("interface_type", value.interfaceType)
+                    put("api_url", value.apiUrl)
+                    put("api_token", value.apiToken)
+                    put("model_name", value.modelName)
+                    put("notes", value.notes)
+                }.toString()
+            ).apply()
+        }
+
+    /** 批量/查词通道生效配置：专用未配置时平滑回落全局配置。 */
+    val effectiveBatchConfig: AIModelConfig
+        get() {
+            val b = batchModelConfig
+            return if (b.apiUrl.isNotBlank() && b.apiToken.isNotBlank() && b.modelName.isNotBlank()) b else modelConfig
+        }
+
     // ---------- 对话记录（多会话） ----------
 
     private fun conversationsKey() = "ai_conversations"

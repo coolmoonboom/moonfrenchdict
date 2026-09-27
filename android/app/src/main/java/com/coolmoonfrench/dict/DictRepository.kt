@@ -430,7 +430,7 @@ class DictRepository(private val context: Context) {
         val meanings = loadMeanings()
         return favoriteWords()
             .mapNotNull { word ->
-                val entry = lookupExact(word).firstOrNull()
+                val dictEntry = lookupExact(word).firstOrNull()
                     ?: vocabIndex[word.lowercase()]?.let { v ->
                         DictEntry(
                             word = v.word,
@@ -440,16 +440,12 @@ class DictRepository(private val context: Context) {
                             meaning = v.meaning
                         )
                     }
-                    ?: meanings[word]?.takeIf { it.isNotBlank() }?.let { m ->
-                        DictEntry(word = word, pos = "", zh = m, en = "", meaning = m)
-                    }
-                // 词典/词书命中但释义为空时，用收藏时记录的中文兜底
-                val filled = entry?.let { e ->
-                    if (e.meaning.isBlank() && !meanings[word].isNullOrBlank()) {
-                        e.copy(meaning = meanings[word].orEmpty(), zh = meanings[word].orEmpty())
-                    } else {
-                        e
-                    }
+                // 用户收藏释义（编辑弹窗 / AI 整理写回）优先于词典内置内容展示，
+                // 词典命中仅提供词头等补充信息。
+                val userMeaning = meanings[word]?.takeIf { it.isNotBlank() }
+                val filled = when {
+                    userMeaning != null -> FavoriteMeaning.applyUserMeaning(dictEntry, word, userMeaning)
+                    else -> dictEntry
                 }
                 filled?.let { it to (times[word] ?: 0L) }
             }

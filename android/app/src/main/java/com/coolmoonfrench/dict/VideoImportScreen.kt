@@ -99,10 +99,51 @@ fun VideoImportScreen(
 
     // 大模型下载任务
     var downloadJob by remember { mutableStateOf<Job?>(null) }
+    var pausedHint by remember { mutableStateOf(false) }
 
-    // 打开界面 / 切换引擎 / 任务结束时刷新模型状态
+    // 本地 vosk 大模型 zip 导入
+    var voskLargeReady by remember { mutableStateOf(VoskModelManager.isLargeReady(context)) }
+    var voskZipBusy by remember { mutableStateOf(false) }
+    var voskJob by remember { mutableStateOf<Job?>(null) }
+    val voskImportPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null && !voskZipBusy) {
+            errorMsg = ""
+            voskZipBusy = true
+            voskJob = scope.launch {
+                val res = runCatching {
+                    VoskModelManager.importLargeModel(context, uri) { }
+                }
+                voskJob = null
+                voskZipBusy = false
+                if (res.isSuccess) {
+                    VoskModelManager.setModelChoice(context, large = true)
+                    voskLargeReady = VoskModelManager.isLargeReady(context)
+                    android.widget.Toast.makeText(
+                        context, "本地模型导入完成：FR/Whisper 未就绪时识别将自动使用它",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    errorMsg = "本地模型导入失败：${res.exceptionOrNull()?.message ?: "文件无效"}"
+                }
+            }
+        }
+    }
+
+    // 离开界面（含退后台）自动暂停正在进行的下载，半截文件保留供续传
+    DisposableEffect(Unit) {
+        onDispose {
+            AsrModelManager.pauseDownload()
+            voskJob?.cancel()
+        }
+    }
+
+    // 打开界面 / 切换引擎 / 任务结束时刷新模型状态（暂停态保留进度提示）
     LaunchedEffect(asrEngine, downloadJob) {
-        if (downloadJob == null) asrState = AsrModelManager.initialState(context, asrEngine)
+        if (downloadJob == null && !pausedHint) {
+            asrState = AsrModelManager.initialState(context, asrEngine)
+        }
     }
     var recognitionJob by remember { mutableStateOf<Job?>(null) }
     val downloadInProgress = downloadJob != null ||
@@ -112,13 +153,20 @@ fun VideoImportScreen(
     fun startAsrDownload() {
         if (downloadInProgress) return
         errorMsg = ""
+        pausedHint = false
         asrState = AsrModelManager.State.Downloading(0, 0, 0)
         downloadJob = scope.launch {
             try {
                 if (asrEngine == AsrModelManager.Engine.FR) {
-                    AsrModelManager.downloadFr(context) { asrState = it }
+                    AsrModelManager.downloadFr(context) {
+                        asrState = it
+                        pausedHint = it is AsrModelManager.State.Paused
+                    }
                 } else {
-                    AsrModelManager.downloadWhisper(context) { asrState = it }
+                    AsrModelManager.downloadWhisper(context) {
+                        asrState = it
+                        pausedHint = it is AsrModelManager.State.Paused
+                    }
                 }
             } catch (e: Exception) {
                 if (asrState !is AsrModelManager.State.Failed) {
@@ -289,6 +337,7 @@ fun VideoImportScreen(
                         onSelect = { selectAsrEngine(AsrModelManager.Engine.FR) },
                         onDownload = { startAsrDownload() },
                         onCancel = { cancelAsrDownload() },
+                        onPause = { AsrModelManager.pauseDownload() },
                         onUninstall = { uninstallAsrModel(AsrModelManager.Engine.FR) }
                     )
                     AsrEngineRow(
@@ -305,8 +354,42 @@ fun VideoImportScreen(
                         onSelect = { selectAsrEngine(AsrModelManager.Engine.WHISPER) },
                         onDownload = { startAsrDownload() },
                         onCancel = { cancelAsrDownload() },
+                        onPause = { AsrModelManager.pauseDownload() },
                         onUninstall = { uninstallAsrModel(AsrModelManager.Engine.WHISPER) }
                     )
+                    HorizontalDivider()
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("本地模型（vosk 大模型 zip）", fontSize = 15.sp)
+                            Text(
+                                if (voskLargeReady) "已导入；选择模型未就绪时识别自动使用它"
+                                else "已有 vosk 法语模型 zip 包可直接导入，免去下载",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (voskZipBusy) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text("导入中…", fontSize = 12.sp)
+                        } else {
+                            TextButton(onClick = {
+                                voskImportPicker.launch(
+                                    arrayOf("application/zip", "application/octet-stream")
+                                )
+                            }) {
+                                Text(if (voskLargeReady) "重新导入" else "导入本地模型", fontSize = 13.sp)
+                            }
+                            if (voskLargeReady) {
+                                TextButton(onClick = {
+                                    VoskModelManager.deleteLargeModel(context)
+                                    voskLargeReady = false
+                                }) {
+                                    Text("卸载", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -491,6 +574,7 @@ private fun AsrEngineRow(
     onSelect: () -> Unit,
     onDownload: () -> Unit,
     onCancel: () -> Unit,
+    onPause: () -> Unit,
     onUninstall: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -540,6 +624,7 @@ private fun AsrEngineRow(
                         fontSize = 12.sp
                     )
                     if (selected) {
+                        TextButton(onClick = onPause) { Text("暂停", fontSize = 12.sp) }
                         TextButton(onClick = onCancel) { Text("取消下载", fontSize = 12.sp) }
                     }
                 }
@@ -558,6 +643,22 @@ private fun AsrEngineRow(
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     Text("重试", fontSize = 13.sp)
+                }
+            }
+            is AsrModelManager.State.Paused -> {
+                LinearProgressIndicator(
+                    progress = { state.percent / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("已暂停 ${state.percent}%，再次开始将断点续传", fontSize = 12.sp)
+                    if (selected) {
+                        Button(
+                            onClick = onDownload,
+                            enabled = !busy,
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                        ) { Text("继续", fontSize = 13.sp) }
+                    }
                 }
             }
             is AsrModelManager.State.Ready -> Unit

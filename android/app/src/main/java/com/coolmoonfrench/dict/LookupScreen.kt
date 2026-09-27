@@ -1,5 +1,8 @@
 package com.coolmoonfrench.dict
 
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.input.pointer.pointerInput
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -103,6 +106,7 @@ fun LookupScreen(
     var contractionPrefix by remember { mutableStateOf("") }
     var contractionBase by remember { mutableStateOf("") }
     var favoriteWords by remember { mutableStateOf(emptySet<String>()) }
+    var showBatchAiSettings by remember { mutableStateOf(false) }
     // AI 查询：手动点「AI 查询」按钮，或本地词库未命中时自动触发；
     // 走批量识别管线，能容错残缺/错拼写法并还原词头，产出结构化多词条结果。
     var aiLookup by remember { mutableStateOf<List<ImportedWord>?>(null) }
@@ -256,7 +260,7 @@ fun LookupScreen(
         aiLookupLoading = false
         if (selected != null || contractionSurface != null) return@LaunchedEffect
         val term = frenchTerm.trim()
-        val config = aiPrefs.modelConfig
+        val config = aiPrefs.effectiveBatchConfig
         if (term.isEmpty() || hasChinese(term) || !IpaService.isConfigured(config)) return@LaunchedEffect
         delay(500)
         if (selected != null) return@LaunchedEffect
@@ -317,9 +321,26 @@ fun LookupScreen(
         val term = frenchTerm.trim()
         if (term.isEmpty()) return
         if (aiLookupLoading) return
-        val config = aiPrefs.modelConfig
+        val config = aiPrefs.effectiveBatchConfig
         if (!IpaService.isConfigured(config)) {
             Toast.makeText(context, "请先在 AI 设置中配置模型", Toast.LENGTH_SHORT).show()
+            return
+        }
+        // 输入为大批量法语词（>50 个）：查词界面原地转接批量导入流程
+        if (ImportWordParser.countImportableFrenchWords(term) > 50) {
+            aiLookupAuto = false
+            aiLookup = null
+            aiLookupError = null
+            aiLookupLoading = true
+            scope.launch {
+                val n = runBatchImport(config, term, repository)
+                aiLookupLoading = false
+                Toast.makeText(
+                    context,
+                    if (n > 0) "已批量识别并导入 $n 个单词到「收藏-单词」" else "批量导入未成功，请稍后重试",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
             return
         }
         aiLookupAuto = false
@@ -333,6 +354,11 @@ fun LookupScreen(
             aiLookupLoading = false
             if (res.isEmpty()) aiLookupError = "AI 未能识别出「$term」的有效词条" else aiLookup = res
         }
+    }
+
+    if (showBatchAiSettings) {
+        AISettingsScreen(prefs = aiPrefs, onBack = { showBatchAiSettings = false }, batch = true)
+        return
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -356,13 +382,24 @@ fun LookupScreen(
                     unfocusedBorderColor = MaterialTheme.colorScheme.outline
                 )
             )
-            OutlinedButton(
-                onClick = { runAiLookup() },
-                modifier = Modifier.padding(end = 4.dp)
+            Box(
+                modifier = Modifier
+                    .padding(end = 4.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { showBatchAiSettings = true })
+                    }
             ) {
-                Text("AI 查询")
+                OutlinedButton(onClick = { runAiLookup() }) {
+                    Text("AI 查询")
+                }
             }
         }
+        Text(
+            "批量导入请转到并长按「收藏-单词」",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 12.dp, top = 2.dp)
+        )
 
         SelectionContainer {
             LazyColumn(
@@ -701,7 +738,7 @@ fun LookupScreen(
                     item {
                         LaunchedEffect(entry.word) {
                             if (onlineResult == null && !hasChinese(entry.meaning)) {
-                                val config = aiPrefs.modelConfig
+                                val config = aiPrefs.effectiveBatchConfig
                                 val aiConfigured = config.apiUrl.isNotBlank() &&
                                     config.apiToken.isNotBlank() && config.modelName.isNotBlank()
                                 val result = withContext(Dispatchers.IO) {

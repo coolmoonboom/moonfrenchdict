@@ -43,6 +43,24 @@ fun SidebarFavoritesScreen(
 ) {
     var tabIndex by remember { mutableIntStateOf(0) }
     var selectedFavId by remember { mutableStateOf<Long?>(null) }
+    var importWord by remember { mutableStateOf<String?>(null) }
+    var showBatchAiSettings by remember { mutableStateOf(false) }
+
+    // 长按单词 → 预填该词打开导入界面；导入界面「去配置 AI」再进入批量专用模型设置
+    if (importWord != null) {
+        if (showBatchAiSettings) {
+            AISettingsScreen(prefs = prefs, onBack = { showBatchAiSettings = false }, batch = true)
+            return
+        }
+        ImportScreen(
+            prefs = prefs,
+            repository = repository,
+            onBack = { importWord = null },
+            onOpenSettings = { showBatchAiSettings = true },
+            initialWord = importWord ?: ""
+        )
+        return
+    }
 
     // 系统返回键：先关闭收藏详情，再返回上一级
     BackHandler(enabled = selectedFavId != null) { selectedFavId = null }
@@ -87,7 +105,7 @@ fun SidebarFavoritesScreen(
 
         when (tabIndex) {
             0 -> AIFavoritesTab(prefs, onOpen = { selectedFavId = it })
-            1 -> WordFavoritesTab(repository, prefs)
+            1 -> WordFavoritesTab(repository, prefs, onImportWord = { importWord = it })
             2 -> SentenceFavoritesTab(prefs)
             3 -> VideoTextFavoritesTab(prefs)
         }
@@ -134,7 +152,7 @@ private fun AIFavoritesTab(prefs: AIPreferences, onOpen: (Long) -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        fav.content,
+                        MarkdownSanitizer.previewPlain(fav.content),
                         fontSize = 14.sp,
                         maxLines = 4,
                         overflow = TextOverflow.Ellipsis
@@ -164,7 +182,7 @@ private fun AIFavoritesTab(prefs: AIPreferences, onOpen: (Long) -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences) {
+private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences, onImportWord: (String) -> Unit) {
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
     var selectionMode by remember { mutableStateOf(false) }
@@ -235,7 +253,7 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
                     onClick = {
                         // 整理：把所选词的「原词 + 当前释义」交给 AI，逐条改写成标准中文词条后
                         // 覆盖写回收藏；AI 未返回中文结果的词保留原义，不做破坏性覆盖。
-                        val config = aiPrefs.modelConfig
+                        val config = aiPrefs.effectiveBatchConfig
                         if (!IpaService.isConfigured(config)) {
                             Toast.makeText(context, "尚未配置 AI 模型，请先在 AI 设置中配置", Toast.LENGTH_LONG).show()
                             return@TextButton
@@ -331,6 +349,21 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
             }
         }
 
+        if (!selectionMode) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "长按单词可在导入界面中编辑/重新导入",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { selectionMode = true }) { Text("批量操作", fontSize = 13.sp) }
+            }
+        }
+
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -349,10 +382,7 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
                                 }
                             },
                             onLongClick = {
-                                if (!selectionMode) {
-                                    selectionMode = true
-                                    if (!selected.contains(entry.word)) selected.add(entry.word)
-                                }
+                                if (!selectionMode) onImportWord(entry.word)
                             }
                         )
                 ) {

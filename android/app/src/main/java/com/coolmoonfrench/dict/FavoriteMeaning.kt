@@ -107,4 +107,23 @@ object FavoriteMeaning {
         if (body.isEmpty()) return ""
         return if (body.startsWith("/")) body else "/$body/"
     }
+
+    /**
+     * 收藏列表展示规则：用户释义（编辑/整理写入）覆盖词典内容。
+     * 词典命中时保留词典词头（可能大小写/连字符更准），词性取用户释义解析结果，
+     * 用户释义为空时回落词典词性；释义行/gloss 用用户内容。纯函数便于测试。
+     */
+    fun applyUserMeaning(dict: DictEntry?, word: String, userMeaning: String): DictEntry {
+        val parsed = parse(userMeaning)
+        val gloss = parsed.gloss().ifBlank { userMeaning.trim() }
+        val head = dict?.word?.takeIf { it.isNotBlank() } ?: word
+        val pos = parsed.pos.ifBlank { dict?.pos ?: "" }
+        return DictEntry(
+            word = head,
+            pos = pos,
+            zh = gloss,
+            en = dict?.en ?: "",
+            meaning = userMeaning.trim()
+        )
+    }
 }
