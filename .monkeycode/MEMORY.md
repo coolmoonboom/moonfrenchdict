@@ -24,3 +24,12 @@ This file records user instructions, preferences, and teachings for reference in
 - Category: Build & Compilation
 - Instructions:
   - 主机总内存 ~8GB。同一后台终端连跑单测+R8 打包时 memory_percent 必须给 70（55 会在 minifyReleaseWithR8 阶段被 cgroup OOM 杀掉，日志只报 "Gradle build daemon disappeared"）；仅 compileDebugKotlin 用 55 即可
+
+[命令行传中文参数会被回显污染随机插入乱码子串]
+- Date: 2026-09-27
+- Context: Discovered by Agent while performing commit / gh release 标题生成
+- Category: Environment Configuration
+- Instructions:
+  - 用 -m/-c 内联中文长参数给 git commits/gh release 时，字符串可能被随机插入乱码token（如 newco、IZAR）。
+  - 规避：长中文文本先 printf 写入临时文件并 cat 校验，再用 marker heredoc 或 -F/$(cat file) 传入。
+  - 推送前必须 git log -1 --format=%B / gh release view 核验实际内容，发现污染用 git commit --amend -F(--title) 修正。
