@@ -167,6 +167,9 @@ object ImportWordParser {
            动词变位形式才还原为不定式原形。
         4. 若输入已给出词性和中文释义（含括注、魁北克用法备注等），原义必须完整保留进
            meaning，你负责补全缺失的词性、音标、例句；不要丢备注信息。
+           若给出的释义是英文（如 "to raise; to recover" 或 "inflection of relever:
+           first/third-person singular present indicative/subjunctive"），必须先理解
+           再翻译成中文写入 meaning，禁止把英文原句照抄进 meaning/output。
         5. 每个数组元素格式：
            {"word":"原词","pos":"词性简称(n.m. n.f. v.t. v.i. adj. adv. loc.adv. loc.verb. interj. contraction 等)","ipa":"/标准IPA音标/","meaning":"中文释义(可含备注)","example":"含该词的地道法语例句","example_zh":"例句的中文翻译"}
         6. example 与 example_zh 必须完整；无法给出可靠例句时两个字段都填空字符串。
@@ -279,6 +282,12 @@ object FavoriteRefiner {
         【统一规范】
         1. meaning 必须是简体中文（法语例证词可夹用），格式：核心释义；有补充再写「；短语：…；备注：…」。
            禁止输出英文释义整句，禁止把输入的英文原文照抄回来。
+           输入的英文释义与英文语法标签是待翻译素材，一律理解后译成中文——包括词典式
+           "inflection of X: first/third-person singular present indicative/subjunctive"、
+           "to do/make; to construct" 这类：要译成对应的中文说法。
+           例：输入 "Releve\t【verb】inflection of relever:；first/third-person singular
+           present indicative/subjunctive；second-person singular imperative"
+           → meaning:"relever 的现在直陈式/虚拟式第一/三人称单数及命令式第二人称单数：举起、抬起；恢复(体力)；记录、登载，重读形式常写作 relevé"。
         2. pos 只能用这些标准缩写：n.m. n.f. v.t. v.i. v. adj. adv. loc.adv. loc.verb. loc. pron.
            prep. conj. interj. art. num. contraction préf. suff.；禁止 verb、noun、adjective 等英文写法。
         3. 输入若是变位/分词等形式（如 Ferais、émis），word 保持输入原样，

@@ -432,20 +432,22 @@ class FloatingWindowService : Service(), LifecycleOwner, ViewModelStoreOwner, Sa
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
+        val unlock = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, FloatingWindowService::class.java).setAction(ACTION_UNLOCK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
         builder
             .setContentTitle(if (FloatingWindowState.locked) "法语悬浮窗（已锁定·点击穿透）" else "法语悬浮窗")
-            .setContentText(if (FloatingWindowState.locked) "悬浮窗已锁定，点击只会落在底层应用上；点此解锁" else "正在显示悬浮卡片并朗读…")
+            .setContentText(if (FloatingWindowState.locked) "悬浮窗已锁定，触摸只会落在底层应用上；点此解锁" else "正在显示悬浮卡片并朗读…")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentIntent(open)
+            // 锁定态点通知正文直接解锁（通知是 ongoing 划不掉，正文+按钮双入口）；
+            // 未锁定点正文照常打开主界面。
+            .setContentIntent(if (FloatingWindowState.locked) unlock else open)
             .setOngoing(true)
         // 锁定态下窗口不接受触摸，「解锁悬浮窗」必须常驻通知栏。
         if (FloatingWindowState.locked) {
-            val unlock = PendingIntent.getService(
-                this,
-                1,
-                Intent(this, FloatingWindowService::class.java).setAction(ACTION_UNLOCK),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
             builder.addAction(0, "解锁悬浮窗", unlock)
         }
         val close = PendingIntent.getService(
