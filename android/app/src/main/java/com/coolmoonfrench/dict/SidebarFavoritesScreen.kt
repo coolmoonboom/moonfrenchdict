@@ -233,31 +233,52 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
                         if (picked.isEmpty()) return@TextButton
                         refining = true
                         uiScope.launch {
-                            var done = 0
-                            picked.chunked(FavoriteRefiner.CHUNK_SIZE).forEach { chunk ->
-                                val results = withContext(Dispatchers.IO) {
-                                    runCatching {
-                                        FavoriteRefiner.refine(config, chunk.map { it.word to it.meaning })
-                                    }.getOrElse { emptyList() }
+                            // 两遍整理：常规批量后，本轮没整出中文的词（多为英文词典位）
+                            // 再按 5 词小批喂 AI 重试；AI 乱改词头的返回直接丢弃不写新键。
+                            val okKeys = mutableSetOf<String>()
+                            suspend fun pass(words: List<Pair<String, String>>) {
+                                val results = runCatching {
+                                    FavoriteRefiner.refine(config, words)
+                                }.getOrElse { emptyList() }
+                                val keyIndex = words.associateBy {
+                                    FavoriteMeaning.normalizeWordKey(it.first).lowercase()
                                 }
-                                // AI 偶发改写大小写/空格：按小写原词回配收藏键，未命中则用返回词原文。
-                                val keyIndex = chunk.associateBy { it.word.lowercase() }
                                 results.forEach { r ->
-                                    val key = keyIndex[r.word.lowercase()]?.word ?: r.word
-                                    val meaning = ImportWordParser.buildMeaning(r)
-                                    if (meaning.isNotBlank()) {
-                                        repository.addFavorite(key, meaning)
-                                        done++
+                                    val orig = keyIndex[FavoriteMeaning.normalizeWordKey(r.word).lowercase()]?.first
+                                        ?: return@forEach
+                                    val rm = ImportWordParser.buildMeaning(r)
+                                    if (rm.isNotBlank()) withContext(Dispatchers.IO) {
+                                        repository.addFavorite(orig, rm)
+                                        okKeys.add(FavoriteMeaning.normalizeWordKey(orig).lowercase())
                                     }
                                 }
                             }
+                            val failed = withContext(Dispatchers.IO) {
+                                picked.chunked(FavoriteRefiner.CHUNK_SIZE).forEach { chunk ->
+                                    pass(chunk.map { it.word to it.meaning })
+                                }
+                                val stubborn = picked.filter {
+                                    FavoriteMeaning.normalizeWordKey(it.word).lowercase() !in okKeys
+                                }
+                                stubborn.chunked(5).forEach { group ->
+                                    pass(group.map { it.word to it.meaning })
+                                }
+                                picked.filter {
+                                    FavoriteMeaning.normalizeWordKey(it.word).lowercase() !in okKeys
+                                }.map { it.word }
+                            }
                             refining = false
-                            Toast.makeText(
-                                context,
-                                if (done > 0) "已整理 $done/${picked.size} 个词的中文义项"
-                                else "AI 本次未能整理出有效中文义项",
-                                Toast.LENGTH_LONG
-                            ).show()
+                            val done = picked.size - failed.size
+                            val msg = when {
+                                done == 0 -> "AI 本次未能整理出有效中文义项"
+                                failed.isEmpty() -> "已整理 $done/${picked.size} 个词的中文义项"
+                                else -> {
+                                    val shown = failed.take(4).joinToString("、")
+                                    val more = if (failed.size > 4) " 等 ${failed.size} 个" else ""
+                                    "已整理 $done/${picked.size}；暂未中文化 ${failed.size} 个: $shown$more"
+                                }
+                            }
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             if (done > 0) {
                                 wordFavs = repository.loadFavorites()
                                 exitSelection()

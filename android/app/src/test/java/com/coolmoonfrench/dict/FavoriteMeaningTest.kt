@@ -70,4 +70,14 @@ class FavoriteMeaningTest {
         )
         assertEquals("", FavoriteMeaning.chineseForSpeech("verb to embrace"))
     }
+
+    @Test
+    fun normalizeWordKeyCollapsesLookalikeVariants() {
+        val base = FavoriteMeaning.normalizeWordKey("Relevé  ")
+        val combining = FavoriteMeaning.normalizeWordKey("Relevé ")
+        val zeroWidth = FavoriteMeaning.normalizeWordKey("Relevé​")
+        org.junit.Assert.assertEquals(base, combining)
+        org.junit.Assert.assertEquals("Relevé", base)
+        org.junit.Assert.assertEquals(base, zeroWidth)
+    }
 }

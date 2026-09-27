@@ -82,6 +82,19 @@ object FavoriteMeaning {
                 )
         }.trim()
 
+    /**
+     * 收藏词键归一：NFC 组合字符、不间断空格、零宽字符、首尾与连续空白收敛。
+     * AI 导入/整理反复写回会产生视觉上完全相同但字节不同的键（如 é 的两种编码），
+     * 造成收藏列表重复、LazyColumn key 冲突崩溃，统一从这里归一。
+     */
+    fun normalizeWordKey(raw: String): String {
+        var s = java.text.Normalizer.normalize(raw.trim(), java.text.Normalizer.Form.NFC)
+        s = s.replace('\u00A0', ' ').replace(Regex("\\s+"), " ")
+        val zeroWidth = listOf(0x200B, 0x200C, 0x200D, 0xFEFF, 0x200E, 0x200F)
+        s = s.filter { it.code !in zeroWidth }
+        return s
+    }
+
     /** 音标行清洗：取第一段 /…/；没有斜杠时去掉行尾粘连的词性缩写再补斜杠。 */
     private fun cleanIpa(raw: String): String {
         if (raw.isEmpty()) return ""

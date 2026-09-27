@@ -454,6 +454,7 @@ class DictRepository(private val context: Context) {
                 filled?.let { it to (times[word] ?: 0L) }
             }
             .sortedByDescending { it.second }
+            .distinctBy { FavoriteMeaning.normalizeWordKey(it.first.word) }
             .map { it.first }
     }
 
@@ -492,15 +493,30 @@ class DictRepository(private val context: Context) {
     }
 
     fun addFavorite(word: String, meaning: String = "") {
+        // 收藏键统一归一（NFC/空白/零宽），杜绝视觉相同的孪生键导致的重复项与列表 key 冲突。
+        val key = FavoriteMeaning.normalizeWordKey(word)
         val set = prefs.getStringSet("words", emptySet())?.toMutableSet() ?: mutableSetOf()
-        val isNew = set.add(word)
+        // 旧数据里同词的孪生键（仅空白/编码差异）一并收编，避免归一键与孪生键并存。
+        val dups = set.filter { it != key && FavoriteMeaning.normalizeWordKey(it) == key }
+        set.removeAll(dups.toSet())
+        val isNew = set.add(key)
         val times = loadWordTimes()
-        if (isNew || !times.containsKey(word)) {
-            times[word] = System.currentTimeMillis()
+        if (isNew || !times.containsKey(key)) {
+            times[key] = System.currentTimeMillis()
         }
         val meanings = loadMeanings()
-        val m = meaning.trim()
-        if (m.isNotEmpty()) meanings[word] = m
+        // 被收编孪生键上的释义在无人工新释义时保留（取最长的一条）。
+        val mergedMeaning = (dups.mapNotNull { meanings[it.trim()] } + listOfNotNull(meanings[key]))
+            .filter { it.isNotBlank() }
+            .maxByOrNull { it.length }
+        val m = meaning.trim().ifEmpty { mergedMeaning.orEmpty() }
+        if (m.isNotEmpty()) meanings[key] = m
+        dups.forEach { d ->
+            meanings.remove(d)
+            meanings.remove(d.trim())
+            times.remove(d)
+            times.remove(d.trim())
+        }
         prefs.edit()
             .putStringSet("words", set)
             .putString("word_times", timesJson(times))
