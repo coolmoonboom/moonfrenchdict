@@ -59,14 +59,9 @@ fun VideoImportScreen(
     val scope = rememberCoroutineScope()
     val prefs = remember { AIPreferences(context) }
 
-    // 模型选择是否默认指向大模型（用户之前选择过才选中，否则小模型）
-    var useLarge by remember { mutableStateOf(hadChosenLarge(context)) }
-    var largeState by remember {
-        mutableStateOf<VoskModelManager.LargeModelState>(VoskModelManager.LargeModelState.NotDownloaded)
-    }
-
-    // 内存是否满足大模型要求（可用内存可能随时间变化，每次识别前都重新校验）
-    var enoughMem by remember { mutableStateOf(VoskModelManager.hasEnoughMemory(context)) }
+    // 识别模型选择（sherpa-onnx 两方案）；未下载时识别静默使用内置轻模型
+    var asrEngine by remember { mutableStateOf(AsrModelManager.selected(context)) }
+    var asrState by remember { mutableStateOf(AsrModelManager.initialState(context, asrEngine)) }
 
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var selectedName by remember { mutableStateOf("") }
@@ -102,51 +97,32 @@ fun VideoImportScreen(
         }
     }
 
-    // 卸载大模型确认弹窗
-    var confirmUninstall by remember { mutableStateOf(false) }
-
-    // 打开界面时刷新大模型状态
-    LaunchedEffect(Unit) {
-        enoughMem = VoskModelManager.hasEnoughMemory(context)
-        largeState = if (VoskModelManager.isLargeReady(context)) {
-            VoskModelManager.LargeModelState.Ready
-        } else {
-            VoskModelManager.LargeModelState.NotDownloaded
-        }
-        useLarge = VoskModelManager.userPrefersLarge(context) && VoskModelManager.isLargeReady(context)
-    }
-
     // 大模型下载任务
     var downloadJob by remember { mutableStateOf<Job?>(null) }
-    var recognitionJob by remember { mutableStateOf<Job?>(null) }
-    val downloadInProgress = largeState is VoskModelManager.LargeModelState.Downloading ||
-        largeState is VoskModelManager.LargeModelState.Installing ||
-        downloadJob != null
 
-    fun afterModelStateChange(state: VoskModelManager.LargeModelState) {
-        largeState = state
-        if (state is VoskModelManager.LargeModelState.Ready) {
-            // 下载/导入完成后：内存可能有变化，重刷内存标记；并确认偏好项已同步为大模型
-            enoughMem = VoskModelManager.hasEnoughMemory(context)
-            VoskModelManager.setModelChoice(context, large = true)
-        }
+    // 打开界面 / 切换引擎 / 任务结束时刷新模型状态
+    LaunchedEffect(asrEngine, downloadJob) {
+        if (downloadJob == null) asrState = AsrModelManager.initialState(context, asrEngine)
     }
+    var recognitionJob by remember { mutableStateOf<Job?>(null) }
+    val downloadInProgress = downloadJob != null ||
+        asrState is AsrModelManager.State.Downloading ||
+        asrState is AsrModelManager.State.Installing
 
-    fun startDownload() {
+    fun startAsrDownload() {
         if (downloadInProgress) return
-        downloadJob?.cancel()
         errorMsg = ""
-        // 清理上一次失败状态，避免残留失败文案
-        largeState = VoskModelManager.LargeModelState.NotDownloaded
+        asrState = AsrModelManager.State.Downloading(0, 0, 0)
         downloadJob = scope.launch {
             try {
-                VoskModelManager.downloadLargeModel(context) { state ->
-                    afterModelStateChange(state)
+                if (asrEngine == AsrModelManager.Engine.FR) {
+                    AsrModelManager.downloadFr(context) { asrState = it }
+                } else {
+                    AsrModelManager.downloadWhisper(context) { asrState = it }
                 }
             } catch (e: Exception) {
-                // downloadLargeModel 内部已回调 DownloadFailed；若在状态推送前就抛错，这里兜底
-                if (largeState !is VoskModelManager.LargeModelState.DownloadFailed) {
-                    largeState = VoskModelManager.LargeModelState.NotDownloaded
+                if (asrState !is AsrModelManager.State.Failed) {
+                    asrState = AsrModelManager.State.NotDownloaded
                 }
             } finally {
                 downloadJob = null
@@ -154,34 +130,24 @@ fun VideoImportScreen(
         }
     }
 
-    fun cancelDownload() {
+    fun cancelAsrDownload() {
         downloadJob?.cancel()
         downloadJob = null
-        largeState = VoskModelManager.LargeModelState.NotDownloaded
+        asrState = AsrModelManager.initialState(context, asrEngine)
     }
 
-    // 导入自选模型（本地 zip）
-    val importPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            errorMsg = ""
-            downloadJob?.cancel()
-            largeState = VoskModelManager.LargeModelState.Installing
-            downloadJob = scope.launch {
-                try {
-                    VoskModelManager.importLargeModel(context, uri) { state ->
-                        afterModelStateChange(state)
-                    }
-                } catch (e: Exception) {
-                    if (largeState !is VoskModelManager.LargeModelState.DownloadFailed) {
-                        largeState = VoskModelManager.LargeModelState.NotDownloaded
-                    }
-                } finally {
-                    downloadJob = null
-                }
-            }
-        }
+    fun selectAsrEngine(engine: AsrModelManager.Engine) {
+        if (downloadInProgress) return
+        asrEngine = engine
+        AsrModelManager.setSelected(context, engine)
+        asrState = AsrModelManager.initialState(context, engine)
+    }
+
+    fun uninstallAsrModel(engine: AsrModelManager.Engine) {
+        downloadJob?.cancel()
+        downloadJob = null
+        AsrModelManager.deleteModel(context, engine)
+        asrState = AsrModelManager.initialState(context, asrEngine)
     }
 
     fun startRecognition() {
@@ -189,14 +155,12 @@ fun VideoImportScreen(
             errorMsg = "请先选择视频文件"
             return
         }
-        // 识别前实时校验一次内存，避免用缓存的误判
-        enoughMem = VoskModelManager.hasEnoughMemory(context)
-        if (!enoughMem && useLarge) {
-            errorMsg = "当前设备内存不足（可用内存 < 2GB），请切换小模型"
-            return
-        }
-        if (useLarge && largeState !is VoskModelManager.LargeModelState.Ready) {
-            errorMsg = "大模型尚未就绪，请先下载完成或切换到小模型"
+        // 识别前实时校验内存（Whisper 模型加载需要约 3GB 可用内存）
+        if (asrEngine == AsrModelManager.Engine.WHISPER &&
+            AsrModelManager.isWhisperReady(context) &&
+            !AsrModelManager.hasEnoughMemoryForWhisper(context)
+        ) {
+            errorMsg = "当前设备内存不足（可用内存 < 3GB），请切换法语快速模型"
             return
         }
         busy = true
@@ -305,130 +269,44 @@ fun VideoImportScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ---------- 模型选择 ----------
+            // ---------- 识别模型 ----------
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("识别模型", style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = !useLarge,
-                            onClick = {
-                                useLarge = false
-                                VoskModelManager.setModelChoice(context, large = false)
-                            }
-                        )
-                        Column {
-                            Text("小模型（内置，快速）", fontSize = 15.sp)
-                            Text("无需网络，支持离线使用", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = useLarge,
-                            onClick = {
-                                useLarge = true
-                                VoskModelManager.setModelChoice(context, large = true)
-                            }
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text("大模型（高精度）", fontSize = 15.sp)
-                            Text(
-                                if (VoskModelManager.isLargeReady(context))
-                                    "已就绪，可用内存 ≥2GB 时识别更准确"
-                                else
-                                    "识别更准确，占空间约 1.4GB，需下载或导入",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    if (useLarge && !enoughMem) {
-                        Text(
-                            "当前可用内存不足 2GB，建议切换小模型以免卡顿/崩溃",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    if (useLarge && enoughMem && !VoskModelManager.isLargeReady(context)) {
-                        Text(
-                            "模型自理：可下载官方大模型，或导入本地自选模型 zip",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    // 大模型下载/导入/卸载区
-                    if (useLarge) {
-                        when (val st = largeState) {
-                            is VoskModelManager.LargeModelState.Ready -> {
-                                Text("大模型已就绪", fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedButton(
-                                        onClick = { importPicker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                                        enabled = !downloadInProgress
-                                    ) {
-                                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("替换/导入模型", fontSize = 13.sp)
-                                    }
-                                    TextButton(
-                                        onClick = { confirmUninstall = true },
-                                        enabled = !downloadInProgress
-                                    ) {
-                                        Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("卸载", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
-                                    }
-                                }
-                            }
-                            is VoskModelManager.LargeModelState.Downloading -> {
-                                LinearProgressIndicator(
-                                    progress = { st.percent / 100f },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Text("下载中：${st.percent}%  ${st.bytesRead / 1024 / 1024}/${st.totalBytes / 1024 / 1024} MB", fontSize = 12.sp)
-                                TextButton(onClick = { cancelDownload() }) { Text("取消下载") }
-                            }
-                            is VoskModelManager.LargeModelState.Installing -> {
-                                CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                                Text("正在解压模型…", fontSize = 12.sp)
-                            }
-                            is VoskModelManager.LargeModelState.DownloadFailed -> {
-                                Text("下载/导入失败：${st.message}", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { startDownload() }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                                        Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("重试下载", fontSize = 13.sp)
-                                    }
-                                    OutlinedButton(
-                                        onClick = { importPicker.launch(arrayOf("application/zip", "application/octet-stream")) },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                    ) {
-                                        Text("导入本地 zip", fontSize = 13.sp)
-                                    }
-                                }
-                            }
-                            is VoskModelManager.LargeModelState.NotDownloaded -> {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { startDownload() }) {
-                                        Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("下载大模型")
-                                    }
-                                    OutlinedButton(
-                                        onClick = { importPicker.launch(arrayOf("application/zip", "application/octet-stream")) }
-                                    ) {
-                                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("导入自选模型")
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Text(
+                        "未下载模型时，默认使用内置轻量识别，无需下载。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    AsrEngineRow(
+                        title = "法语快速模型（约 52MB）",
+                        subtitle = "纯法语优化，识别速度快，适合日常使用",
+                        selected = asrEngine == AsrModelManager.Engine.FR,
+                        state = if (asrEngine == AsrModelManager.Engine.FR) asrState
+                            else if (AsrModelManager.isFrReady(context)) AsrModelManager.State.Ready else AsrModelManager.State.NotDownloaded,
+                        busy = downloadInProgress,
+                        warning = null,
+                        onSelect = { selectAsrEngine(AsrModelManager.Engine.FR) },
+                        onDownload = { startAsrDownload() },
+                        onCancel = { cancelAsrDownload() },
+                        onUninstall = { uninstallAsrModel(AsrModelManager.Engine.FR) }
+                    )
+                    AsrEngineRow(
+                        title = "Whisper 高精度模型（约 1GB）",
+                        subtitle = "Whisper large-v3-turbo，识别更准，输出法语 + 中文双语",
+                        selected = asrEngine == AsrModelManager.Engine.WHISPER,
+                        state = if (asrEngine == AsrModelManager.Engine.WHISPER) asrState
+                            else if (AsrModelManager.isWhisperReady(context)) AsrModelManager.State.Ready else AsrModelManager.State.NotDownloaded,
+                        busy = downloadInProgress,
+                        warning = if (asrEngine == AsrModelManager.Engine.WHISPER &&
+                            AsrModelManager.isWhisperReady(context) &&
+                            !AsrModelManager.hasEnoughMemoryForWhisper(context)
+                        ) "当前可用内存低于 3GB，识别可能卡顿" else null,
+                        onSelect = { selectAsrEngine(AsrModelManager.Engine.WHISPER) },
+                        onDownload = { startAsrDownload() },
+                        onCancel = { cancelAsrDownload() },
+                        onUninstall = { uninstallAsrModel(AsrModelManager.Engine.WHISPER) }
+                    )
                 }
             }
 
@@ -597,36 +475,92 @@ fun VideoImportScreen(
     if (showResultDialog && resultText.isNotEmpty()) {
         FullTextDialog(text = resultText, title = "识别结果", onDismiss = { showResultDialog = false })
     }
-
-    // ---------- 卸载大模型确认弹窗 ----------
-    if (confirmUninstall) {
-        AlertDialog(
-            onDismissRequest = { confirmUninstall = false },
-            title = { Text("卸载大模型") },
-            text = { Text("将删除已下载的大模型文件（约 1.4GB），释放存储空间。删除后如需高精度识别可重新下载或导入。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmUninstall = false
-                    // 删除模型文件并回落小模型
-                    VoskModelManager.deleteLargeModel(context)
-                    largeState = VoskModelManager.LargeModelState.NotDownloaded
-                    useLarge = false
-                    VoskModelManager.setModelChoice(context, large = false)
-                    errorMsg = ""
-                }) {
-                    Text("确认卸载", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmUninstall = false }) {
-                    Text("取消")
-                }
-            }
-        )
-    }
 }
 
-/** 读取用户上次选择的模型模式（仅用于初始选中态，若大模型未就绪会被强制回落小模型） */
-private fun hadChosenLarge(context: android.content.Context): Boolean {
-    return VoskModelManager.getModelChoice(context) is VoskModelManager.ModelOption.Large
+/**
+ * 识别模型单行选项：单选 + 名称/说明 + 下载状态与操作（下载/进度/取消/重试/卸载）。
+ */
+@Composable
+private fun AsrEngineRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    state: AsrModelManager.State,
+    busy: Boolean,
+    warning: String?,
+    onSelect: () -> Unit,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+    onUninstall: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = selected, onClick = onSelect, enabled = !busy)
+            Column(Modifier.weight(1f)) {
+                Text(title, fontSize = 15.sp)
+                Text(
+                    if (state is AsrModelManager.State.Ready) "已下载，可用" else subtitle,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (state is AsrModelManager.State.Ready) {
+                TextButton(onClick = onUninstall, enabled = !busy) {
+                    Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("卸载", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+        if (warning != null) {
+            Text(warning, fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+        }
+        when (state) {
+            is AsrModelManager.State.NotDownloaded -> {
+                Button(
+                    onClick = onDownload,
+                    enabled = !busy,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Filled.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("下载", fontSize = 13.sp)
+                }
+            }
+            is AsrModelManager.State.Downloading -> {
+                LinearProgressIndicator(
+                    progress = { state.percent / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                val total = state.totalBytes
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (total > 0) "下载中 ${state.percent}%（${state.bytesRead / 1024 / 1024}/${total / 1024 / 1024} MB）"
+                        else "下载中 ${state.bytesRead / 1024 / 1024} MB",
+                        fontSize = 12.sp
+                    )
+                    if (selected) {
+                        TextButton(onClick = onCancel) { Text("取消下载", fontSize = 12.sp) }
+                    }
+                }
+            }
+            is AsrModelManager.State.Installing -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("正在安装模型…", fontSize = 12.sp)
+                }
+            }
+            is AsrModelManager.State.Failed -> {
+                Text("下载失败：${state.message}", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                Button(
+                    onClick = onDownload,
+                    enabled = !busy,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text("重试", fontSize = 13.sp)
+                }
+            }
+            is AsrModelManager.State.Ready -> Unit
+        }
+    }
 }

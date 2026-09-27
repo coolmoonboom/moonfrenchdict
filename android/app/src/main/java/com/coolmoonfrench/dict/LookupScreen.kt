@@ -284,6 +284,24 @@ fun LookupScreen(
         return favoriteWords.any { it == word || FavoriteMeaning.normalizeWordKey(it) == key }
     }
 
+    // AI 结果收藏：已收藏（哪怕旧内容是英文）直接用 AI 结果覆盖替换，缺例句的也借此补齐
+    fun replaceFavoriteWithFeedback(word: String, meaning: String) {
+        val existed = isFavored(word)
+        val norm = FavoriteMeaning.normalizeWordKey(word)
+        if (existed) {
+            // 清掉可能的孪生旧键，只保留 AI 词头一条
+            favoriteWords.filter { FavoriteMeaning.normalizeWordKey(it) == norm }
+                .forEach { repository.removeFavorite(it) }
+        }
+        repository.addFavorite(word, meaning)
+        favoriteWords = favoriteWords + word
+        Toast.makeText(
+            context,
+            if (existed) "已替换原收藏内容" else "加入收藏成功",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
     fun addFavoriteWithFeedback(word: String, meaning: String) {
         if (isFavored(word)) {
             Toast.makeText(context, "已经收藏过了", Toast.LENGTH_SHORT).show()
@@ -574,7 +592,7 @@ fun LookupScreen(
                             context = context,
                             aiPrefs = aiPrefs,
                             favored = isFavored(w.word),
-                            onFavorite = { addFavoriteWithFeedback(w.word, ImportWordParser.buildMeaning(w)) }
+                            onFavorite = { replaceFavoriteWithFeedback(w.word, ImportWordParser.buildMeaning(w)) }
                         )
                     }
                 }
@@ -615,7 +633,16 @@ fun LookupScreen(
                                     val starFav = isFavored(entry.word)
                                     IconButton(
                                         onClick = {
-                                            addFavoriteWithFeedback(entry.word, entry.meaning)
+                                            if (starFav) {
+                                                repository.removeFavorite(entry.word)
+                                                val norm = FavoriteMeaning.normalizeWordKey(entry.word)
+                                                favoriteWords = favoriteWords.filter {
+                                                    FavoriteMeaning.normalizeWordKey(it) != norm
+                                                }.toSet()
+                                                Toast.makeText(context, "已取消收藏", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                addFavoriteWithFeedback(entry.word, entry.meaning)
+                                            }
                                         },
                                         modifier = Modifier.size(60.dp)
                                     ) {

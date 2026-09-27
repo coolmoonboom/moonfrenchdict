@@ -550,7 +550,7 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         if (locked) settingsVisible = false
     }
 
-    // 朗读：切词自动播一次「单词→例句→中文释义」；单句循环则反复播当前词；
+    // 朗读：切词自动播一次「单词→中文释义→法文例句→例句中文翻译」；单句循环则反复播当前词；
     // 列表循环则播完自动切下一词（切词会重启本效果继续播，形成连续循环）。
     // 法文（单词/例句）永远走法语引擎，中文（义项）永远走中文引擎且只读汉字，
     // 词性括号等非中文字符不发音。
@@ -558,6 +558,14 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
         if (word.isEmpty() || FloatingWindowState.paused) return@LaunchedEffect
         while (true) {
             Espeak.speakAwait(word, deterministic = true)
+            // 顺序与视觉版式一致：中文释义 → 法文例句 → 例句中文翻译
+            if (FloatingWindowState.revealMeaning) {
+                val zh = FavoriteMeaning.chineseForSpeech(parsed.zh)
+                if (zh.isNotBlank()) {
+                    ChineseTts.ensureInitialized(context)
+                    ChineseTts.speakAwait(zh)
+                }
+            }
             var ex = currentExample()
             if (ex == null && exampleWaitedFor != word) {
                 // 语料例句往往比词头晚到一拍：等它最多 2 秒补读；确认没有则不再空等
@@ -572,11 +580,12 @@ private fun FloatingWordWindow(service: FloatingWindowService) {
             if (ex != null && ex.first.isNotBlank()) {
                 Espeak.speakAwait(ex.first)
             }
-            if (FloatingWindowState.revealMeaning) {
-                val zh = FavoriteMeaning.chineseForSpeech(parsed.zh)
-                if (zh.isNotBlank()) {
+            if (FloatingWindowState.revealMeaning && ex != null && ex.second.isNotBlank()) {
+                // 「这天将会到来」这类例句中文翻译同样要读，只读汉字
+                val exZh = FavoriteMeaning.chineseForSpeech(ex.second)
+                if (exZh.isNotBlank()) {
                     ChineseTts.ensureInitialized(context)
-                    ChineseTts.speakAwait(zh)
+                    ChineseTts.speakAwait(exZh)
                 }
             }
             if (FloatingWindowState.loopOne) continue

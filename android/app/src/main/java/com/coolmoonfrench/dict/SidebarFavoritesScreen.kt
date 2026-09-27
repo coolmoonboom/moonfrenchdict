@@ -7,7 +7,10 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +29,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.layout.imePadding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -164,6 +170,7 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
     var selectionMode by remember { mutableStateOf(false) }
     val selected = remember { mutableStateListOf<String>() }
     var refining by remember { mutableStateOf(false) }
+    var editTarget by remember { mutableStateOf<DictEntry?>(null) }
     val uiScope = rememberCoroutineScope()
 
     // 预热 Mimic 法语 TTS（幂等，非阻塞），同时刷新收藏（词书新增收藏后重进可见）
@@ -199,10 +206,13 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
         // 多选模式顶部操作条：全选 / 复制 / 整理 / 播放 / 移除 / 取消
         if (selectionMode) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("已选 ${selected.size}/${wordFavs.size}", fontSize = 13.sp)
+                Text("已选 ${selected.size}/${wordFavs.size}", fontSize = 13.sp, maxLines = 1)
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = {
                     selected.clear()
@@ -366,13 +376,17 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(entry.word, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                            // 只显示词性+中文义项；音标/例句只进悬浮窗，不占列表行
                             Text(
-                                entry.meaning.take(60),
+                                FavoriteMeaning.parse(entry.meaning).gloss(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 12.sp,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
+                        }
+                        IconButton(onClick = { editTarget = entry }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "编辑 ${entry.word}", modifier = Modifier.size(16.dp))
                         }
                         IconButton(onClick = {
                             Speech.ensureInitialized(context)
@@ -387,6 +401,103 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
                             Icon(Icons.Filled.ContentCopy, contentDescription = "复制", modifier = Modifier.size(16.dp))
                         }
                     }
+                }
+            }
+        }
+
+        // 编辑弹窗：可改单词、词性、音标、中文释义与法语/中文例句（例句仅悬浮窗展示朗读）
+        editTarget?.let { target ->
+            FavoriteWordEditDialog(
+                entry = target,
+                onDismiss = { editTarget = null },
+                onSave = { edited ->
+                    val w = edited.word.trim()
+                    val rm = ImportWordParser.buildMeaning(edited)
+                    if (w.isNotEmpty() && rm.isNotBlank()) {
+                        repository.addFavorite(w, rm)
+                        if (FavoriteMeaning.normalizeWordKey(w) !=
+                            FavoriteMeaning.normalizeWordKey(target.word)
+                        ) {
+                            repository.removeFavorite(target.word)
+                        }
+                        wordFavs = repository.loadFavorites()
+                        Toast.makeText(context, "已保存修改", Toast.LENGTH_SHORT).show()
+                    }
+                    editTarget = null
+                }
+            )
+        }
+    }
+}
+
+/** 收藏词条编辑器：与 AI 识别预览同一套字段口径，保存后覆盖写回原收藏键。 */
+@Composable
+private fun FavoriteWordEditDialog(
+    entry: DictEntry,
+    onDismiss: () -> Unit,
+    onSave: (ImportedWord) -> Unit
+) {
+    val w = remember(entry.word) {
+        val parsed = FavoriteMeaning.parse(entry.meaning)
+        ImportedWord(
+            word = entry.word,
+            pos = parsed.pos.ifBlank { entry.pos },
+            ipa = parsed.ipa,
+            meaning = parsed.zh,
+            example = parsed.exampleFr,
+            exampleZh = parsed.exampleZh
+        )
+    }
+    var head by remember { mutableStateOf(ImportWordParser.formatHead(w.word, w.pos, w.ipa, w.meaning)) }
+    var example by remember { mutableStateOf(w.example) }
+    var exampleZh by remember { mutableStateOf(w.exampleZh) }
+    Dialog(onDismissRequest = onDismiss) {
+        Card {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+            ) {
+                Text("编辑词条", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("单词｜词性｜音标｜释义", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = head,
+                    onValueChange = {
+                        head = it
+                        val p = ImportWordParser.splitHead(it)
+                        w.word = p.word; w.pos = p.pos; w.ipa = p.ipa; w.meaning = p.meaning
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    placeholder = { Text("bannir｜v.t.｜/ba.niʁ/｜封禁，驱逐") }
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = example,
+                    onValueChange = { example = it; w.example = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3,
+                    placeholder = { Text("法语例句（仅悬浮窗展示朗读）") }
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = exampleZh,
+                    onValueChange = { exampleZh = it; w.exampleZh = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3,
+                    placeholder = { Text("例句中文翻译（仅悬浮窗展示朗读）") }
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(onClick = { onSave(w) }) { Text("保存") }
                 }
             }
         }

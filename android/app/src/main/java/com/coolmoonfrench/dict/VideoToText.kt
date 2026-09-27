@@ -103,8 +103,17 @@ object VideoToText {
         }
     }
 
-    /** 读取 wav，用小模型或大模型做语音识别，返回识别文本。 */
+    /** 读取 wav 做语音识别，返回识别文本。优先用户所选 sherpa 模型，未就绪时静默用内置 vosk。 */
     private suspend fun recognizeWav(context: Context, wav: File): String {
+        when (AsrModelManager.engineInUse(context)) {
+            AsrModelManager.Engine.FR ->
+                return SherpaAsr.recognize(context, wav, AsrModelManager.Engine.FR)
+            AsrModelManager.Engine.WHISPER -> {
+                val fr = SherpaAsr.recognize(context, wav, AsrModelManager.Engine.WHISPER)
+                return fr + chineseTrack(context, fr)
+            }
+            null -> Unit
+        }
         val modelDir = VoskModelManager.currentModelDir(context)
             ?: // 小模型兜底（理论上 currentModelDir 对 Small 恒可用，这里防御）
             VoskModelManager.ensureSmallModel(context)
@@ -175,4 +184,49 @@ object VideoToText {
         }
         return -1
     }
+
+    /**
+     * Whisper 识别法语文本后，用已配置的 AI 模型翻译成中文，拼成"法语原文 + 中文"双轨。
+     * AI 未配置或翻译失败时只返回纯法语文本（不阻断识别结果）。
+     */
+    private suspend fun chineseTrack(context: Context, french: String): String {
+        val config = AIPreferences(context).modelConfig
+        if (config.apiToken.isBlank() || config.apiUrl.isBlank() || config.modelName.isBlank()) return ""
+        return try {
+            val translated = StringBuilder()
+            for (chunk in chunkText(french, 900)) {
+                coroutineContext.ensureActive()
+                val zh = AIClient.chat(
+                    config,
+                    listOf(AIMessage("user", chunk)),
+                    systemPromptOverride = "你是法译中翻译引擎。把用户发来的法语忠实翻译成自然中文，只输出中文译文本身，不要解释、不要加引号或前后缀。"
+                ).trim()
+                if (zh.isNotEmpty()) {
+                    if (translated.isNotEmpty()) translated.append("\n")
+                    translated.append(zh)
+                }
+            }
+            if (translated.isEmpty()) "" else "\n\n【中文】\n" + translated.toString()
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            ""
+        }
+    }
+
+    /** 按空白边界把长文本切成不超过 [limit] 字符的片段。 */
+    private fun chunkText(text: String, limit: Int): List<String> {
+        if (text.length <= limit) return if (text.isEmpty()) emptyList() else listOf(text)
+        val parts = mutableListOf<String>()
+        var rest = text
+        while (rest.length > limit) {
+            var cut = rest.lastIndexOf(' ', limit)
+            if (cut < limit / 2) cut = rest.lastIndexOf('\n', limit)
+            if (cut < limit / 2) cut = limit
+            parts.add(rest.substring(0, cut).trim())
+            rest = rest.substring(cut).trim()
+        }
+        if (rest.isNotBlank()) parts.add(rest)
+        return parts
+    }
+
 }

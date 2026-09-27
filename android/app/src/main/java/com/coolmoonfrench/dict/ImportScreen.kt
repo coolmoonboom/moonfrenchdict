@@ -268,10 +268,24 @@ object FavoriteRefiner {
                 return@repeat
             }
             // 义项必须中文为主才有效；英文主导（含零星汉字）的词典回声丢弃并触发重试。
-            val usable = ImportWordParser.parse(reply)
+            val all = ImportWordParser.parse(reply)
+            val usable = all
                 .filter { FavoriteMeaning.chineseDominant(it.meaning) }
                 .map { it.copy(pos = ImportWordParser.normalizePos(it.pos)) }
-            if (usable.isNotEmpty()) return usable
+            if (usable.isEmpty()) return@repeat
+            // 词形匹配优先；AI 常把 élevée 之类变位/分词还原成原形导致对不上号，
+            // 输出与原样数量一致时按输入顺序位次补齐，词头写回原收藏键，保证内容必达。
+            val byKey = usable.associateBy(
+                { FavoriteMeaning.normalizeWordKey(it.word).lowercase() },
+                { it }
+            )
+            val positional = all.size == words.size && usable.size == words.size
+            val result = words.mapIndexedNotNull { i, input ->
+                val k = FavoriteMeaning.normalizeWordKey(input.first).lowercase()
+                byKey[k]
+                    ?: (if (positional) usable.getOrNull(i) else null)?.let { it.copy(word = input.first) }
+            }
+            if (result.isNotEmpty()) return result
         }
         return emptyList()
     }
@@ -292,13 +306,19 @@ object FavoriteRefiner {
            例：输入 "Releve\t【verb】inflection of relever:；first/third-person singular
            present indicative/subjunctive；second-person singular imperative"
            → meaning:"relever 的现在直陈式/虚拟式第一/三人称单数及命令式第二人称单数：举起、抬起；恢复(体力)；记录、登载，重读形式常写作 relevé"。
-        2. pos 只能用这些标准缩写：n.m. n.f. v.t. v.i. v. adj. adv. loc.adv. loc.verb. loc. pron.
+        2. 标准示范——输入 "demeure\tn.f. 住所"，应输出：
+           [{"word":"demeure","pos":"n.f.","ipa":"/də.myʁ/","meaning":"住所；居所（正式用语）",
+             "example":"Cette vieille demeure date du XVIIe siècle.","example_zh":"这座古老的居所建于十七世纪。"}]
+           每个词条都填满这六个字段：词头、词性、音标、中文释义、法语例句、例句中文翻译。
+        3. pos 只能用这些标准缩写：n.m. n.f. v.t. v.i. v. adj. adv. loc.adv. loc.verb. loc. pron.
            prep. conj. interj. art. num. contraction préf. suff.；禁止 verb、noun、adjective 等英文写法。
-        3. 输入若是变位/分词等形式（如 Ferais、émis），word 保持输入原样，
+        4. 输入若是变位/分词等形式（如 Ferais、émis），word 保持输入原样，
            meaning 开头先说明词形来源再给中文义，例：「faire 的现在条件式第一/二人称单数：会做、做」。
-        4. 输入里已有的中文说明与备注（魁北克口语、用法括注等）必须完整保留进 meaning。
-        5. 输入每行输出一条、顺序一致，一单词不落；无法给出可靠例句时
-           example 与 example_zh 留空字符串。
+        5. 输入里已有的中文说明与备注（魁北克口语、用法括注等）必须完整保留进 meaning。
+        6. 输入每行输出一条、顺序一致、一单词不落；word 必须与输入逐字一致，
+           不许换成词典原形（原形信息写进 meaning 的词形说明里）。
+        7. example 与 example_zh 为必填：每个词都要配一句地道常用、体现该词含义的
+           法语例句及其中文翻译，宁可平凡也不要留空或漏条。
     """.trimIndent()
 }
 
