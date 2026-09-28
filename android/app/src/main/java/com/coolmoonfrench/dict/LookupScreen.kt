@@ -1,8 +1,6 @@
 package com.coolmoonfrench.dict
 
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
-import androidx.compose.ui.input.pointer.pointerInput
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -21,7 +19,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -73,7 +75,7 @@ internal fun detectContraction(text: String): Contraction? {
     return Contraction(t, full, base)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LookupScreen(
     repository: DictRepository,
@@ -323,7 +325,7 @@ fun LookupScreen(
         if (aiLookupLoading) return
         val config = aiPrefs.effectiveBatchConfig
         if (!IpaService.isConfigured(config)) {
-            Toast.makeText(context, "请先在 AI 设置中配置模型", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "尚未配置 AI 模型：长按「AI 查询」按钮可配置查词与批量导入专用模型", Toast.LENGTH_LONG).show()
             return
         }
         // 输入为大批量法语词（>50 个）：查词界面原地转接批量导入流程
@@ -385,13 +387,18 @@ fun LookupScreen(
             Box(
                 modifier = Modifier
                     .padding(end = 4.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(onLongPress = { showBatchAiSettings = true })
-                    }
+                    .clip(CircleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                    .combinedClickable(
+                        onClick = { runAiLookup() },
+                        onLongClick = { showBatchAiSettings = true }
+                    )
             ) {
-                OutlinedButton(onClick = { runAiLookup() }) {
-                    Text("AI 查询")
-                }
+                Text(
+                    "AI 查询",
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
             }
         }
         Text(
