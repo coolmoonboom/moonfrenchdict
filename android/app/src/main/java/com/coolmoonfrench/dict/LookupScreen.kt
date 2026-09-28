@@ -282,7 +282,7 @@ fun LookupScreen(
         aiLookupAuto = true
         aiLookupLoading = true
         val res = withContext(Dispatchers.IO) {
-            runCatching { ImportWordParser.recognize(config, term) }.getOrElse { emptyList() }
+            runCatching { ImportWordParser.lookup(config, term) }.getOrElse { emptyList() }
         }
         aiLookupLoading = false
         if (res.isEmpty()) aiLookupError = "AI 未能识别出「$term」的有效词条" else aiLookup = res
@@ -364,7 +364,7 @@ fun LookupScreen(
         aiLookupLoading = true
         scope.launch {
             val res = withContext(Dispatchers.IO) {
-                runCatching { ImportWordParser.recognize(config, term) }.getOrElse { emptyList() }
+                runCatching { ImportWordParser.lookup(config, term) }.getOrElse { emptyList() }
             }
             aiLookupLoading = false
             if (res.isEmpty()) aiLookupError = "AI 未能识别出「$term」的有效词条" else aiLookup = res

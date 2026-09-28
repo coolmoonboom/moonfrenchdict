@@ -38,6 +38,12 @@ data class ImportedWord(
 /** 用已配置的大模型把用户粘贴的内容识别成「词性 + 音标 + 中文释义 + 例句 + 中文例句」词条列表。 */
 object ImportWordParser {
 
+    /** 单词语义查询结果缓存（同一词二次查询秒回），LRU 上限 96 条。 */
+    private val lookupCache = object : LinkedHashMap<String, List<ImportedWord>>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<ImportedWord>>) = size > 96
+    }
+    private val lookupLock = Any()
+
     /** 单批送入 AI 的字符预算：太长容易被截断输出，太短批次过多。 */
     private const val CHUNK_CHARS = 600
     private const val CHUNK_LINES = 24
@@ -57,6 +63,60 @@ object ImportWordParser {
             // 剔除整句英文的词典回声释义（含零星汉字也算英文主导）。
             .filter { FavoriteMeaning.chineseDominant(it.meaning) }
             .map { it.copy(pos = normalizePos(it.pos)) }
+    }
+
+    /**
+     * 单个词/短语的轻量 AI 查询：
+     * - 用极短提示词 + 输出上限（约 500 token）+ 低温度，显著缩短等待时间；
+     * - 同词结果本地缓存，重复查询即时返回。
+     */
+    suspend fun lookup(config: AIModelConfig, term: String): List<ImportedWord> {
+        val key = term.lowercase().trim()
+        if (key.isEmpty()) return emptyList()
+        synchronized(lookupLock) { lookupCache[key] }?.let { return it }
+        if (!IpaService.isConfigured(config)) return emptyList()
+        val reply = try {
+            AIClient.chat(
+                config,
+                listOf(AIMessage("user", buildLookupPrompt(term))),
+                maxTokens = 500,
+                temperature = 0.2,
+                timeoutSeconds = 45
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val result = parseAny(reply)
+            .filter { FavoriteMeaning.chineseDominant(it.meaning) }
+            .map { it.copy(pos = normalizePos(it.pos)) }
+        if (result.isNotEmpty()) synchronized(lookupLock) { lookupCache[key] = result }
+        return result
+    }
+
+    /** 单词查询专用短提示词：单条 JSON 对象，字段紧凑、例句从简。 */
+    private fun buildLookupPrompt(term: String): String = """
+        你是法语词典。为下面的输入输出一个词条，只输出一个 JSON 对象，不要解释、不要代码块：
+        {"word":"","pos":"","ipa":"","meaning":"","example":"","example_zh":"","root":""}
+        规则：word 填规范词头（带冠词短语照原样，动词变位还原为不定式原形，拼写残缺先还原）；
+        pos 用标准缩写（n.m. n.f. v.t. v.i. v. adj. adv. loc.adv. loc.verb. pron. prep. conj. interj. num.）；
+        ipa 用 /.../ 包裹；meaning 用简体中文、多义项以；分隔、不要英文；
+        example 一句简短法语例句、example_zh 其中文翻译；
+        root 仅有明确可考的词根时填「词根原形 = 简明中文」，否则空字符串。
+        输入：$term
+    """.trimIndent()
+
+    /** 兼容模型返回 JSON 对象或数组两种形态。 */
+    internal fun parseAny(reply: String): List<ImportedWord> {
+        val cleaned = reply.replace("```json", "").replace("```", "").trim()
+        val oi = cleaned.indexOf('{')
+        val ai = cleaned.indexOf('[')
+        // 数组形态直接交给 parse；对象形态（可能夹带前后说明文字）截取首个 { 到末个 }
+        if (ai >= 0 && (oi < 0 || ai < oi)) return parse(cleaned)
+        val end = cleaned.lastIndexOf('}')
+        if (oi < 0 || end <= oi) return emptyList()
+        return parse("[${cleaned.substring(oi, end + 1)}]")
     }
 
     /**

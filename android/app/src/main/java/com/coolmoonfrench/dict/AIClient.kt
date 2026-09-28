@@ -68,7 +68,10 @@ object AIClient {
         config: AIModelConfig,
         messages: List<AIMessage>,
         webContext: String? = null,
-        systemPromptOverride: String? = null
+        systemPromptOverride: String? = null,
+        maxTokens: Int? = null,
+        temperature: Double? = null,
+        timeoutSeconds: Long? = null
     ): String = withContext(Dispatchers.IO) {
         val base = config.apiUrl.trim().trimEnd('/')
         val sysPrompt = systemPromptOverride ?: systemPrompt
@@ -86,11 +89,12 @@ object AIClient {
                 messages.forEach { m ->
                     arr.put(JSONObject().put("role", m.role).put("content", m.content))
                 }
-                bodyJson = JSONObject()
+                val body = JSONObject()
                     .put("model", config.modelName)
-                    .put("max_tokens", 4096)
+                    .put("max_tokens", maxTokens ?: 4096)
                     .put("messages", arr)
-                    .toString()
+                if (temperature != null) body.put("temperature", temperature)
+                bodyJson = body.toString()
             }
             AIInterfaceType.OPENAI_RESPONSES -> {
                 url = base.substringBeforeLast("/responses").trimEnd('/') + "/responses"
@@ -102,10 +106,12 @@ object AIClient {
                 messages.forEach { m ->
                     input.put(JSONObject().put("role", m.role).put("content", m.content))
                 }
-                bodyJson = JSONObject()
+                val body = JSONObject()
                     .put("model", config.modelName)
                     .put("input", input)
-                    .toString()
+                if (maxTokens != null) body.put("max_output_tokens", maxTokens)
+                if (temperature != null) body.put("temperature", temperature)
+                bodyJson = body.toString()
             }
             else -> { // openai_chat
                 url = base.substringBeforeLast("/chat/completions").trimEnd('/') + "/chat/completions"
@@ -117,11 +123,12 @@ object AIClient {
                 messages.forEach { m ->
                     arr.put(JSONObject().put("role", m.role).put("content", m.content))
                 }
-                bodyJson = JSONObject()
+                val body = JSONObject()
                     .put("model", config.modelName)
                     .put("messages", arr)
-                    .put("temperature", 0.7)
-                    .toString()
+                    .put("temperature", temperature ?: 0.7)
+                if (maxTokens != null) body.put("max_tokens", maxTokens)
+                bodyJson = body.toString()
             }
         }
 
@@ -137,6 +144,10 @@ object AIClient {
         }
 
         val call = client.newCall(reqBuilder.build())
+        // 单次调用可设独立超时，避免个别慢请求把界面长时间挂住
+        if (timeoutSeconds != null) {
+            call.timeout().timeout(timeoutSeconds, TimeUnit.SECONDS)
+        }
         // 用 enqueue + suspendCancellableCoroutine 替换阻塞的 execute()，
         // 使协程取消（用户点停止）能立刻 call.cancel() 中断网络请求，而非等读超时。
         return@withContext suspendCancellableCoroutine { cont ->

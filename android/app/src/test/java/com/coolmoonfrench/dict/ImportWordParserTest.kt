@@ -138,4 +138,27 @@ class ImportWordParserTest {
         val m = ImportWordParser.buildMeaning(w)
         assertTrue(m.startsWith("【v.】faire 的现在条件式"))
     }
+
+    @Test
+    fun `parseAny accepts bare json object with root`() {
+        val json = """{"word":"manque","pos":"n.m.","ipa":"/mɑ̃k/","meaning":"缺乏；短缺","example":"Il manque de patience.","example_zh":"他缺乏耐心。","root":"mancus = 手部残缺、有缺损、不全的"}"""
+        val list = ImportWordParser.parseAny(json)
+        assertEquals(1, list.size)
+        assertEquals("manque", list[0].word)
+        assertEquals("mancus = 手部残缺、有缺损、不全的", list[0].root)
+    }
+
+    @Test
+    fun `parseAny tolerates surrounding prose and code fence`() {
+        val reply = "好的，词条如下：\n```json\n{\"word\":\"sévir\",\"pos\":\"v.i.\",\"ipa\":\"/seviʁ/\",\"meaning\":\"严厉处置\",\"example\":\"\",\"example_zh\":\"\",\"root\":\"\"}\n```"
+        val list = ImportWordParser.parseAny(reply)
+        assertEquals(1, list.size)
+        assertEquals("sévir", list[0].word)
+    }
+
+    @Test
+    fun `parseAny still handles array form`() {
+        val json = """[{"word":"école","pos":"n.f.","ipa":"/ekɔl/","meaning":"学校","example":"","example_zh":"","root":""}]"""
+        assertEquals(1, ImportWordParser.parseAny(json).size)
+    }
 }

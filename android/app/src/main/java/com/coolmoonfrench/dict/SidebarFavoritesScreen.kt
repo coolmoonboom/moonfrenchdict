@@ -6,6 +6,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -35,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SidebarFavoritesScreen(
     prefs: AIPreferences,
@@ -43,11 +45,11 @@ fun SidebarFavoritesScreen(
 ) {
     var tabIndex by remember { mutableIntStateOf(0) }
     var selectedFavId by remember { mutableStateOf<Long?>(null) }
-    var importWord by remember { mutableStateOf<String?>(null) }
+    var showImport by remember { mutableStateOf(false) }
     var showBatchAiSettings by remember { mutableStateOf(false) }
 
-    // 长按单词 → 预填该词打开导入界面；导入界面「去配置 AI」再进入批量专用模型设置
-    if (importWord != null) {
+    // 长按「单词」标签 → 打开 AI 识别导入界面；界面内「去配置 AI」再进入批量专用模型设置
+    if (showImport) {
         if (showBatchAiSettings) {
             AISettingsScreen(prefs = prefs, onBack = { showBatchAiSettings = false }, batch = true)
             return
@@ -55,9 +57,8 @@ fun SidebarFavoritesScreen(
         ImportScreen(
             prefs = prefs,
             repository = repository,
-            onBack = { importWord = null },
-            onOpenSettings = { showBatchAiSettings = true },
-            initialWord = importWord ?: ""
+            onBack = { showImport = false },
+            onOpenSettings = { showBatchAiSettings = true }
         )
         return
     }
@@ -87,25 +88,50 @@ fun SidebarFavoritesScreen(
             Text("收藏", fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
 
-        // 四个分类 Tab
-        TabRow(selectedTabIndex = tabIndex) {
-            Tab(selected = tabIndex == 0, onClick = { tabIndex = 0 }) {
-                Text("AI 收藏", modifier = Modifier.padding(vertical = 12.dp))
-            }
-            Tab(selected = tabIndex == 1, onClick = { tabIndex = 1 }) {
-                Text("单词", modifier = Modifier.padding(vertical = 12.dp))
-            }
-            Tab(selected = tabIndex == 2, onClick = { tabIndex = 2 }) {
-                Text("句子", modifier = Modifier.padding(vertical = 12.dp))
-            }
-            Tab(selected = tabIndex == 3, onClick = { tabIndex = 3 }) {
-                Text("视频转文字", modifier = Modifier.padding(vertical = 12.dp))
+        // 四个分类 Tab；长按「单词」标签直接进入 AI 识别导入界面
+        Row(modifier = Modifier.fillMaxWidth()) {
+            listOf("AI 收藏", "单词", "句子", "视频转文字").forEachIndexed { idx, label ->
+                val sel = tabIndex == idx
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .combinedClickable(
+                            onClick = { tabIndex = idx },
+                            onLongClick = { if (idx == 1) { tabIndex = 1; showImport = true } }
+                        )
+                ) {
+                    Text(
+                        label,
+                        color = if (sel) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 14.sp,
+                        fontWeight = if (sel) FontWeight.Medium else FontWeight.Normal,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                    if (sel) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(2.dp)
+                                .background(MaterialTheme.colorScheme.primary)
+                        )
+                    }
+                }
             }
         }
+        Text(
+            "长按「单词」标签可进入 AI 识别导入",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp)
+        )
+        HorizontalDivider()
 
         when (tabIndex) {
             0 -> AIFavoritesTab(prefs, onOpen = { selectedFavId = it })
-            1 -> WordFavoritesTab(repository, prefs, onImportWord = { importWord = it })
+            1 -> WordFavoritesTab(repository, prefs)
             2 -> SentenceFavoritesTab(prefs)
             3 -> VideoTextFavoritesTab(prefs)
         }
@@ -182,7 +208,7 @@ private fun AIFavoritesTab(prefs: AIPreferences, onOpen: (Long) -> Unit) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences, onImportWord: (String) -> Unit) {
+private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences) {
     val context = LocalContext.current
     var wordFavs by remember { mutableStateOf(repository.loadFavorites()) }
     var selectionMode by remember { mutableStateOf(false) }
@@ -349,21 +375,6 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences,
             }
         }
 
-        if (!selectionMode) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "长按单词可在导入界面中编辑/重新导入",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = { selectionMode = true }) { Text("批量操作", fontSize = 13.sp) }
-            }
-        }
-
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -382,7 +393,10 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences,
                                 }
                             },
                             onLongClick = {
-                                if (!selectionMode) onImportWord(entry.word)
+                                if (!selectionMode) {
+                                    selectionMode = true
+                                    if (!selected.contains(entry.word)) selected.add(entry.word)
+                                }
                             }
                         )
                 ) {
