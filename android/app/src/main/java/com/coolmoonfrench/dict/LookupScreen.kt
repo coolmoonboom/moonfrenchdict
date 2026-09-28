@@ -204,6 +204,18 @@ fun LookupScreen(
         translateError = null
         zhError = null
         searchJob?.cancel()
+        if (!settings.localDictEnabled) {
+            // AI 优先模式：输入本身不触发任何查询，等用户点「AI 查询」
+            selected = null
+            similar = emptyList()
+            related = emptyList()
+            derived = emptyList()
+            prefixSuggestions = emptyList()
+            zhToFr = null
+            zhTranslating = false
+            frenchTerm = if (hasChinese(q)) "" else q
+            return
+        }
         if (q.isBlank()) {
             selected = null
             similar = emptyList()
@@ -248,7 +260,7 @@ fun LookupScreen(
     // 无精确匹配时的前缀建议：异步加载，避免阻塞 UI
     LaunchedEffect(frenchTerm) {
         val q = frenchTerm.trim()
-        if (q.isBlank() || hasChinese(q) || selected != null) {
+        if (!settings.localDictEnabled || q.isBlank() || hasChinese(q) || selected != null) {
             prefixSuggestions = emptyList()
             return@LaunchedEffect
         }
@@ -260,6 +272,7 @@ fun LookupScreen(
         aiLookup = null
         aiLookupError = null
         aiLookupLoading = false
+        if (!settings.localDictEnabled) return@LaunchedEffect
         if (selected != null || contractionSurface != null) return@LaunchedEffect
         val term = frenchTerm.trim()
         val config = aiPrefs.effectiveBatchConfig
@@ -320,7 +333,7 @@ fun LookupScreen(
 
     // 手动点「AI 查询」：无视本地命中，直接把当前输入交给 AI 识别查询
     fun runAiLookup() {
-        val term = frenchTerm.trim()
+        val term = frenchTerm.ifBlank { query }.trim()
         if (term.isEmpty()) return
         if (aiLookupLoading) return
         val config = aiPrefs.effectiveBatchConfig
@@ -1262,6 +1275,14 @@ private fun AiLookupCard(
                 fontSize = 16.sp,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
+            if (word.root.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "｜${word.root}",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                )
+            }
             if (word.example.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(

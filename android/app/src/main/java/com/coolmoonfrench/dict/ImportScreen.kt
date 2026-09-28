@@ -30,7 +30,9 @@ data class ImportedWord(
     var ipa: String = "",
     var meaning: String = "",
     var example: String = "",
-    var exampleZh: String = ""
+    var exampleZh: String = "",
+    /** 语源词根（如 "mancus = 手部残缺、有缺损、不全的"），无明确词根时为空 */
+    var root: String = ""
 )
 
 /** 用已配置的大模型把用户粘贴的内容识别成「词性 + 音标 + 中文释义 + 例句 + 中文例句」词条列表。 */
@@ -216,7 +218,8 @@ object ImportWordParser {
                     ipa = o.optString("ipa", "").trim(),
                     meaning = o.optString("meaning", "").trim(),
                     example = o.optString("example", "").trim(),
-                    exampleZh = o.optString("example_zh", "").trim()
+                    exampleZh = o.optString("example_zh", "").trim(),
+                    root = o.optString("root", "").trim()
                 )
             }
             result
@@ -260,6 +263,7 @@ object ImportWordParser {
         if (w.ipa.isNotBlank()) sb.append("\n音标 ${w.ipa.trim()}")
         if (w.example.isNotBlank()) sb.append("\n例句：${w.example.trim()}")
         if (w.exampleZh.isNotBlank()) sb.append("\n中文：${w.exampleZh.trim()}")
+        if (w.root.isNotBlank()) sb.append("\n词根：${w.root.trim()}")
         return sb.toString()
     }
 }
@@ -326,8 +330,8 @@ object FavoriteRefiner {
            → meaning:"relever 的现在直陈式/虚拟式第一/三人称单数及命令式第二人称单数：举起、抬起；恢复(体力)；记录、登载，重读形式常写作 relevé"。
         2. 标准示范——输入 "demeure\tn.f. 住所"，应输出：
            [{"word":"demeure","pos":"n.f.","ipa":"/də.myʁ/","meaning":"住所；居所（正式用语）",
-             "example":"Cette vieille demeure date du XVIIe siècle.","example_zh":"这座古老的居所建于十七世纪。"}]
-           每个词条都填满这六个字段：词头、词性、音标、中文释义、法语例句、例句中文翻译。
+             "example":"Cette vieille demeure date du XVIIe siècle.","example_zh":"这座古老的居所建于十七世纪。","root":""}]
+           每个词条都填满这六个字段：词头、词性、音标、中文释义、法语例句、例句中文翻译；root 见规则 8。
         3. pos 只能用这些标准缩写：n.m. n.f. v.t. v.i. v. adj. adv. loc.adv. loc.verb. loc. pron.
            prep. conj. interj. art. num. contraction préf. suff.；禁止 verb、noun、adjective 等英文写法。
         4. 输入若是变位/分词等形式（如 Ferais、émis），word 保持输入原样，
@@ -337,6 +341,10 @@ object FavoriteRefiner {
            不许换成词典原形（原形信息写进 meaning 的词形说明里）。
         7. example 与 example_zh 为必填：每个词都要配一句地道常用、体现该词含义的
            法语例句及其中文翻译，宁可平凡也不要留空或漏条。
+        8. root 词根（选填）：当该词源自明确可考的拉丁语/希腊语/日耳曼语词根时，
+           填「词根原形 = 词根含义的简明白话中文」，例：manque →
+           "root":"mancus = 手部残缺、有缺损、不全的"（变位/派生形式按其原形判断词根）；
+           词源不明确、日常本土衍生或不确定的，一律填空字符串，绝不允许编造词源。
     """.trimIndent()
 }
 

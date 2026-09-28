@@ -110,6 +110,27 @@ fun SettingsSheet(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
+            // 本地词库开关
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+            ) {
+                Text("输入时查本地词库", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                Switch(
+                    checked = settings.localDictEnabled,
+                    onCheckedChange = { settings.updateLocalDict(it) }
+                )
+            }
+
+            Text(
+                "关闭（默认）＝ AI 优先：输入单词后不做任何查询，点击「AI 查询」才显示 AI 词条。开启＝输入时即搜索本地词库并显示词典结果。",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
             // 调试日志开关
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -152,16 +173,6 @@ fun SettingsSheet(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-            // 数据来源致谢
-            Text("数据来源", fontWeight = FontWeight.Medium, fontSize = 15.sp, modifier = Modifier.padding(top = 8.dp))
-            Text(
-                VocabExamples.ATTRIBUTION,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
         }
     }
 }

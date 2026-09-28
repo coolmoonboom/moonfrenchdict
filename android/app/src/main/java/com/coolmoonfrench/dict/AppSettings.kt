@@ -46,6 +46,10 @@ class AppSettings(context: Context) {
     var floatFontScale by mutableFloatStateOf(prefs.getFloat("float_font_scale", 1f))
         private set
 
+    /** 输入时是否查本地词库并即时显示本地结果；关闭 = AI 优先，手动点「AI 查询」才出结果 */
+    var localDictEnabled by mutableStateOf(prefs.getBoolean("local_dict", false))
+        private set
+
     /** 悬浮窗词卡背景不透明度（0 完全透底，白字直接叠在桌面；1 全黑底；默认 1.0） */
     var floatBgAlpha by mutableFloatStateOf(snapFloatBgAlpha(prefs.getFloat("float_bg_alpha", 1f)))
         private set
@@ -94,6 +98,11 @@ class AppSettings(context: Context) {
         val clamped = v.coerceIn(0.8f, 1.6f)
         floatFontScale = clamped
         prefs.edit().putFloat("float_font_scale", clamped).apply()
+    }
+
+    fun updateLocalDict(v: Boolean) {
+        localDictEnabled = v
+        prefs.edit().putBoolean("local_dict", v).apply()
     }
 
     fun updateFloatBgAlpha(v: Float) {
