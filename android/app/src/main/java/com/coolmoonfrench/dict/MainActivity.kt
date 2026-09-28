@@ -39,7 +39,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -202,7 +203,8 @@ fun MainTabs(
     aiPrefs: AIPreferences,
     onExtractSubtitles: () -> Unit
 ) {
-    var selected by rememberSaveable { mutableStateOf(1) }
+    // 不持久化：每次进入 App 都从「查词」页开始
+    var selected by remember { mutableStateOf(1) }
     var showSettings by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     var showGrammar by remember { mutableStateOf(false) }
@@ -219,6 +221,16 @@ fun MainTabs(
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+    // 任意覆盖层（设置/收藏/历史/语法/抽屉等）打开时，底层的查词页不应抢占焦点、弹键盘
+    val overlayOpen = showSettings || showHistory || showGrammar || showGrammarLearn ||
+        showPronouns || showFavorites || showAISettings || showQuestionTypes ||
+        showVideoImport || showVoiceChat || showCalNum || showPhonetics || drawerState.isOpen
+
+    // 每次回到 App（含从后台/小窗切回）都回到「查词」首页，配合输入框的窗口焦点回调自动唤起键盘
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        selected = 1
+    }
 
     // 自动同步：开启同步间隔且已登录时按间隔合并云端与本地（登录/开启后无需重启即可生效）
     val syncCtx = LocalContext.current
@@ -431,7 +443,7 @@ fun MainTabs(
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 1) 1f else 0f).zIndex(if (selected == 1) 1f else 0f)) {
                     LookupScreen(
                         repository, translator, conjugator, morphology, settings, aiPrefs,
-                        active = selected == 1
+                        active = selected == 1 && !overlayOpen
                     )
                 }
                 Box(modifier = Modifier.fillMaxSize().alpha(if (selected == 2) 1f else 0f).zIndex(if (selected == 2) 1f else 0f)) {

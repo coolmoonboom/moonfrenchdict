@@ -3,6 +3,7 @@ package com.coolmoonfrench.dict
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -22,6 +23,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -102,6 +104,8 @@ private fun dispatchLongPress(view: View, x: Float, y: Float) {
  * @param focusRequester 外部聚焦器（可空，内部默认持有）。
  * @param requestFocusKey 当该值从 null 变为非 null 时，自动聚焦并弹出输入法，
  *   用于「点开界面即开始搜索」。聚焦成功后再弹输入法，避免键盘弹出但无光标。
+ *   只有在窗口真正持有焦点（[windowFocused]）时才聚焦弹键盘：小窗/分屏或从后台
+ *   回到应用时，窗口未必已获得焦点，过早 requestFocus 会导致「有键盘但无光标」。
  */
 @Composable
 fun SelectableOutlinedTextField(
@@ -135,16 +139,26 @@ fun SelectableOutlinedTextField(
     var fieldBounds by remember { mutableStateOf<Rect?>(null) }
     val scope = rememberCoroutineScope()
 
+    // 跟踪窗口焦点：窗口未获得焦点时 requestFocus 不会生效，强行 show 键盘就会出现「有键盘无光标」。
+    var windowFocused by remember { mutableStateOf(view.hasWindowFocus()) }
+    DisposableEffect(view) {
+        val listener = ViewTreeObserver.OnWindowFocusChangeListener { focused -> windowFocused = focused }
+        view.viewTreeObserver.addOnWindowFocusChangeListener(listener)
+        onDispose { view.viewTreeObserver.removeOnWindowFocusChangeListener(listener) }
+    }
+
     LaunchedEffect(value) {
         if (value != tf.text) {
             tf = tf.copy(text = value, selection = TextRange(value.length))
         }
     }
 
-    // 外部要求聚焦（进入界面自动弹输入法）：先聚焦再弹键盘，确保光标在位。
-    LaunchedEffect(requestFocusKey) {
-        if (requestFocusKey != null) {
+    // 外部要求聚焦（进入界面自动弹输入法）：等窗口真正持有焦点后再聚焦，聚焦成功后再弹键盘，
+    // 并把光标放到文本末尾，确保既有键盘也有光标。
+    LaunchedEffect(requestFocusKey, windowFocused) {
+        if (requestFocusKey != null && windowFocused) {
             fr.requestFocus()
+            tf = tf.copy(selection = TextRange(tf.text.length))
             delay(120)
             keyboard?.show()
         }
