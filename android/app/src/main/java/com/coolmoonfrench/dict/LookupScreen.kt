@@ -36,6 +36,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -103,6 +104,8 @@ fun LookupScreen(
     var zhError by remember { mutableStateOf<String?>(null) }
     // 实际用于法语查询的词（中文输入时为翻译结果，法语输入时即输入本身）
     var frenchTerm by remember { mutableStateOf("") }
+    // 中文反查本地词库的其它候选译法
+    var zhAlternatives by remember { mutableStateOf<List<DictEntry>>(emptyList()) }
     // 省音缩合信息（如 d'eau → de + eau）
     var contractionSurface by remember { mutableStateOf<String?>(null) }
     var contractionPrefix by remember { mutableStateOf("") }
@@ -213,6 +216,7 @@ fun LookupScreen(
             prefixSuggestions = emptyList()
             zhToFr = null
             zhTranslating = false
+            zhAlternatives = emptyList()
             frenchTerm = if (hasChinese(q)) "" else q
             return
         }
@@ -225,15 +229,36 @@ fun LookupScreen(
             frenchTerm = ""
             zhToFr = null
             zhTranslating = false
+            zhAlternatives = emptyList()
             return
         }
         if (hasChinese(q)) {
-            // 中文输入：先翻译成法语，再按原有流程查询法语结果
+            // 中文输入：先离线反查本地词库 zh释义 字段（毫秒级、零网络）；
+            // 未命中才走在线翻译（AI 12 秒硬超时 + MyMemory 兜底），速度优先
             frenchTerm = ""
             zhToFr = null
+            zhError = null
+            zhAlternatives = emptyList()
             zhTranslating = true
             searchJob = scope.launch {
+                val local = withContext(Dispatchers.IO) { repository.lookupByZh(q) }
+                if (!isActive) return@launch
+                if (local.isNotEmpty()) {
+                    val first = local.first().word
+                    withContext(Dispatchers.Main) {
+                        zhTranslating = false
+                        zhToFr = MyMemoryTranslator.TranslateResult(first, "本地词库")
+                        frenchTerm = first
+                        zhAlternatives = local.drop(1).distinctBy { FavoriteMeaning.normalizeWordKey(it.word) }
+                    }
+                    searchFrench(first)
+                    return@launch
+                }
+                // 未命中词库：短暂防抖后交给 AI（限 12 秒），失败再退 MyMemory（8 秒）
+                delay(250)
+                if (!isActive) return@launch
                 val res = TranslationAssist.zhToFr(q, aiPrefs, translator)
+                if (!isActive) return@launch
                 val fr = res?.translatedText?.trim()
                 withContext(Dispatchers.Main) {
                     zhTranslating = false
@@ -246,6 +271,7 @@ fun LookupScreen(
         } else {
             zhToFr = null
             zhTranslating = false
+            zhAlternatives = emptyList()
             frenchTerm = q
             searchJob = scope.launch { searchFrench(q) }
         }
@@ -421,6 +447,11 @@ fun LookupScreen(
             modifier = Modifier.padding(start = 12.dp, top = 2.dp)
         )
 
+        // 主词条的「带冠词 / 名词化」形式：AI 优先，离线兜底
+        val entryWord = selected?.word.orEmpty()
+        val entryPos = selected?.pos.orEmpty()
+        val entryForms = rememberWordForms(entryWord, entryPos, aiPrefs, conjugator)
+
         SelectionContainer {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -498,6 +529,60 @@ fun LookupScreen(
                             color = MaterialTheme.colorScheme.error,
                             fontSize = 13.sp
                         )
+                    }
+                }
+
+                // 中文反查本地词库的其它候选译法
+                if (zhAlternatives.isNotEmpty()) {
+                    item {
+                        Text(
+                            "其它译法",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    item {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(zhAlternatives) { e ->
+                                Card(
+                                    onClick = {
+                                        searchJob?.cancel()
+                                        selected = e
+                                        query = e.word
+                                        frenchTerm = e.word
+                                        zhToFr = null
+                                        zhTranslating = false
+                                        expansion = null
+                                        onlineResult = null
+                                        breakdown = morphology.analyze(e.word, repository)
+                                    },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                                    )
+                                ) {
+                                    Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(e.word, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                                            if (e.pos.isNotEmpty()) {
+                                                Spacer(Modifier.width(4.dp))
+                                                Text(e.pos, color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+                                            }
+                                        }
+                                        Text(
+                                            e.meaning.take(18),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 11.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -648,8 +733,14 @@ fun LookupScreen(
                             word = w,
                             context = context,
                             aiPrefs = aiPrefs,
+                            conjugator = conjugator,
                             favored = isFavored(w.word),
-                            onFavorite = { replaceFavoriteWithFeedback(w.word, ImportWordParser.buildMeaning(w)) }
+                            onFavorite = { forms ->
+                                replaceFavoriteWithFeedback(
+                                    w.word,
+                                    WordForms.appendToMeaning(ImportWordParser.buildMeaning(w), forms)
+                                )
+                            }
                         )
                     }
                 }
@@ -698,7 +789,10 @@ fun LookupScreen(
                                                 }.toSet()
                                                 Toast.makeText(context, "已取消收藏", Toast.LENGTH_SHORT).show()
                                             } else {
-                                                addFavoriteWithFeedback(entry.word, entry.meaning)
+                                                addFavoriteWithFeedback(
+                                                    entry.word,
+                                                    WordForms.appendToMeaning(entry.meaning, entryForms)
+                                                )
                                             }
                                         },
                                         modifier = Modifier.size(60.dp)
@@ -732,13 +826,20 @@ fun LookupScreen(
                                     textColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
                                     fontSize = 15.sp
                                 )
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = entry.meaning,
-                                    fontSize = 16.sp,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                                if (expansion != null) {
+                                 Spacer(Modifier.height(8.dp))
+                                 Text(
+                                     text = entry.meaning,
+                                     fontSize = 16.sp,
+                                     color = MaterialTheme.colorScheme.onPrimaryContainer
+                                 )
+                                 if (entryForms.isNotEmpty()) {
+                                     Spacer(Modifier.height(8.dp))
+                                     FormsList(
+                                         forms = entryForms,
+                                         textColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                     )
+                                 }
+                                 if (expansion != null) {
                                     Spacer(Modifier.height(6.dp))
                                     Text(
                                         expansion!!,
@@ -1214,10 +1315,12 @@ private fun AiLookupCard(
     word: ImportedWord,
     context: Context,
     aiPrefs: AIPreferences,
+    conjugator: VerbConjugator?,
     favored: Boolean,
-    onFavorite: () -> Unit
+    onFavorite: (List<WordForm>) -> Unit
 ) {
     val pos = word.pos.ifBlank { DictEntry.extractPos(word.meaning) }
+    val forms = rememberWordForms(word.word, pos, aiPrefs, conjugator)
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1283,6 +1386,13 @@ private fun AiLookupCard(
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
                 )
             }
+            if (forms.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                FormsList(
+                    forms = forms,
+                    textColor = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
             if (word.example.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -1312,7 +1422,7 @@ private fun AiLookupCard(
                     modifier = Modifier
                         .size(20.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .clickable { onFavorite() }
+                        .clickable { onFavorite(forms) }
                 )
                 Spacer(Modifier.weight(1f))
                 Text(

@@ -9,7 +9,9 @@ data class ParsedMeaning(
     val zh: String = "",
     val ipa: String = "",
     val exampleFr: String = "",
-    val exampleZh: String = ""
+    val exampleZh: String = "",
+    /** 「带冠词 / 名词化」形式行（如 "le jardin / du jardin / les jardins / des jardins"）。 */
+    val forms: String = ""
 ) {
     /** 词卡义项行：词性 + 中文释义（不含音标/例句噪声）。 */
     fun gloss(): String = if (pos.isNotEmpty()) "【$pos】$zh" else zh
@@ -25,12 +27,15 @@ object FavoriteMeaning {
         var ipa = ""
         var fr = ""
         var zhEx = ""
+        var forms = ""
         val zhParts = StringBuilder()
         meaning.lineSequence().forEach { raw ->
             val line = raw.trim()
             if (line.isEmpty()) return@forEach
             when {
                 line.startsWith("音标") -> ipa = cleanIpa(line.removePrefix("音标").trim())
+                line.startsWith(WordForms.MEANING_PREFIX) ->
+                    forms = line.removePrefix(WordForms.MEANING_PREFIX).trim()
                 line.startsWith("例句：") -> fr = line.removePrefix("例句：").trim()
                 line.startsWith("例句:") -> fr = line.removePrefix("例句:").trim()
                 line.startsWith("中文：") -> zhEx = line.removePrefix("中文：").trim()
@@ -53,7 +58,7 @@ object FavoriteMeaning {
         }
         zh = zhParts.toString().trim()
         // 旧格式释义常带 's'~ v.pr.' 之类的反身标记在尾部；pos 留空时把行内 v.pr. 收进词性。
-        return ParsedMeaning(pos = pos, zh = zh, ipa = ipa, exampleFr = fr, exampleZh = zhEx)
+        return ParsedMeaning(pos = pos, zh = zh, ipa = ipa, exampleFr = fr, exampleZh = zhEx, forms = forms)
     }
 
     /**

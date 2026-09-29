@@ -227,6 +227,26 @@ class DictRepository(private val context: Context) {
     }
 
     /**
+     * 中文反查本地词典：直接在 zh 释义字段里查询（离线、毫秒级），
+     * 中文输入优先走这里，避免先走在线翻译再查词的双重网络等待。
+     */
+    fun lookupByZh(query: String, limit: Int = 8): List<DictEntry> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        val db = dbHelper.readableDatabase
+        val result = mutableListOf<DictEntry>()
+        db.rawQuery(
+            "SELECT word, pos, zh, en FROM dict WHERE zh LIKE ? ESCAPE '\\' " +
+                "ORDER BY (instr(zh, ?) = 1) DESC, instr(zh, ?), length(word) LIMIT ?",
+            arrayOf("%$escaped%", q, q, limit.toString())
+        ).use { c ->
+            while (c.moveToNext()) result.add(rowToEntry(c))
+        }
+        return result
+    }
+
+    /**
      * 3-gram 候选缩小：取查询词各 gram 的 posting 并集，保留共享 gram 数 ≥ MIN_SHARED 的候选。
      * 返回候选 norm 集合（内存映射），避免逐 id 查库。
      */

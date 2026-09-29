@@ -421,13 +421,23 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
                         Column(modifier = Modifier.weight(1f)) {
                             Text(entry.word, fontWeight = FontWeight.Medium, fontSize = 15.sp)
                             // 只显示词性+中文义项；音标/例句只进悬浮窗，不占列表行
+                            val parsed = FavoriteMeaning.parse(entry.meaning)
                             Text(
-                                FavoriteMeaning.parse(entry.meaning).gloss(),
+                                parsed.gloss(),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 12.sp,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            if (parsed.forms.isNotBlank()) {
+                                Text(
+                                    "冠词：${parsed.forms}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                         IconButton(onClick = { editTarget = entry }) {
                             Icon(Icons.Filled.Edit, contentDescription = "编辑 ${entry.word}", modifier = Modifier.size(16.dp))
@@ -456,7 +466,12 @@ private fun WordFavoritesTab(repository: DictRepository, aiPrefs: AIPreferences)
                 onDismiss = { editTarget = null },
                 onSave = { edited ->
                     val w = edited.word.trim()
-                    val rm = ImportWordParser.buildMeaning(edited)
+                    var rm = ImportWordParser.buildMeaning(edited)
+                    // 编辑弹窗不含冠词形式字段，保存时把原收藏的「冠词：」行原样保留
+                    val oldForms = FavoriteMeaning.parse(target.meaning).forms
+                    if (oldForms.isNotBlank() && !rm.contains(WordForms.MEANING_PREFIX)) {
+                        rm += "\n" + WordForms.MEANING_PREFIX + oldForms
+                    }
                     if (w.isNotEmpty() && rm.isNotBlank()) {
                         repository.addFavorite(w, rm)
                         if (FavoriteMeaning.normalizeWordKey(w) !=
