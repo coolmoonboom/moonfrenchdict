@@ -37,6 +37,62 @@ object VerbUsages {
             )),
             UsagePattern("faire du / de la / des + 名词", "从事（运动/活动）", listOf(
                 VerbExample("Je fais du sport trois fois par semaine.", "我每周做三次运动。")
+            )),
+            // ---- faire 的固定搭配 ----
+            UsagePattern("faire partie ~de~ **qch**", "属于、是……的一部分", listOf(
+                VerbExample("Ce problème fait partie de notre quotidien.", "这个问题是我们日常的一部分。")
+            )),
+            UsagePattern("faire preuve ~de~ **qch**", "表现出、显示出（某种品质/态度）", listOf(
+                VerbExample("Elle a fait preuve de beaucoup de courage.", "她表现出很大的勇气。"),
+                VerbExample("Il faut faire preuve de patience.", "必须表现出耐心。")
+            )),
+            UsagePattern("faire attention ~à~ **qch / qqn**", "注意、当心某人某物", listOf(
+                VerbExample("Fais attention à la marche !", "小心台阶！")
+            )),
+            UsagePattern("faire plaisir ~à~ **qqn**", "使某人高兴、讨某人喜欢", listOf(
+                VerbExample("Cette surprise lui a fait plaisir.", "这个惊喜让他很高兴。")
+            )),
+            UsagePattern("faire peur ~à~ **qqn**", "使某人害怕、吓唬某人", listOf(
+                VerbExample("Tu m'as fait peur !", "你吓了我一跳！")
+            )),
+            UsagePattern("faire confiance ~à~ **qqn**", "信任某人", listOf(
+                VerbExample("Je te fais entièrement confiance.", "我完全信任你。")
+            )),
+            UsagePattern("faire la connaissance ~de~ **qqn**", "结识某人", listOf(
+                VerbExample("J'ai fait la connaissance de sa sœur hier.", "我昨天结识了他的姐姐。")
+            )),
+            UsagePattern("faire face ~à~ **qch**", "面对、应对（困难等）", listOf(
+                VerbExample("Nous devons faire face à cette crise.", "我们必须应对这场危机。")
+            )),
+            UsagePattern("faire appel ~à~ **qqn / qch**", "求助于某人；诉诸某事物", listOf(
+                VerbExample("Il a fait appel à un avocat.", "他请了一位律师。")
+            )),
+            UsagePattern("faire signe ~à~ **qqn**", "向某人示意、招手/使眼色", listOf(
+                VerbExample("Elle m'a fait signe de m'approcher.", "她示意我走近。")
+            )),
+            UsagePattern("faire semblant ~de~ **faire qch**", "假装做某事", listOf(
+                VerbExample("Il a fait semblant de ne pas me voir.", "他假装没看见我。")
+            )),
+            UsagePattern("faire exprès ~de~ **faire qch**", "故意做某事", listOf(
+                VerbExample("Ce n'est pas grave, il l'a fait exprès.", "没关系，他是故意那么做的。")
+            )),
+            UsagePattern("faire la queue", "排队", listOf(
+                VerbExample("On fait la queue depuis une heure.", "我们排了一个小时的队。")
+            )),
+            UsagePattern("faire de son mieux", "尽力而为", listOf(
+                VerbExample("Il fait de son mieux pour t'aider.", "他尽力帮你。")
+            )),
+            UsagePattern("faire des progrès", "取得进步", listOf(
+                VerbExample("Tu fais de gros progrès en français.", "你的法语进步很大。")
+            )),
+            UsagePattern("faire du bien / du mal ~à~ **qqn**", "对某人有好处 / 伤害某人", listOf(
+                VerbExample("Une bonne nuit de sommeil te fera du bien.", "好好睡一觉对你有好处。")
+            )),
+            UsagePattern("faire la grasse matinée", "睡懒觉", listOf(
+                VerbExample("Le week-end, j'aime faire la grasse matinée.", "周末我喜欢睡懒觉。")
+            )),
+            UsagePattern("faire un tour", "转一圈、兜一圈", listOf(
+                VerbExample("On va faire un tour en ville ?", "我们去城里转一圈吧？")
             ))
         ))
 
@@ -177,6 +233,9 @@ object VerbUsages {
             )),
             UsagePattern("tenir **qch**", "拿着/保持", listOf(
                 VerbExample("Tiens ce paquet une minute.", "帮我拿一下这个包。")
+            )),
+            UsagePattern("tenir compte ~de~ **qch**", "考虑到、顾及某事物", listOf(
+                VerbExample("Il faut tenir compte des détails.", "必须考虑到细节。")
             ))
         ))
         put("servir", listOf(
@@ -185,6 +244,9 @@ object VerbUsages {
             )),
             UsagePattern("servir **qch** ~à~ **qqn**", "给某人端上/提供", listOf(
                 VerbExample("Le serveur nous sert le plat principal.", "服务员给我们端上主菜。")
+            )),
+            UsagePattern("se servir ~de~ **qch**", "使用某物", listOf(
+                VerbExample("Je me sers d'un dictionnaire.", "我使用一本词典。")
             ))
         ))
         put("s'intéresser", listOf(
@@ -381,6 +443,49 @@ object VerbUsages {
             )),
             UsagePattern("avoir l'habitude ~de~ **faire qch**", "习惯于做某事", listOf(
                 VerbExample("J'ai l'habitude de me lever tôt.", "我习惯早起。")
+            )),
+            // ---- avoir 的固定搭配 ----
+            UsagePattern("avoir l'intention ~de~ **faire qch**", "打算做某事", listOf(
+                VerbExample("J'ai l'intention de partir demain.", "我打算明天出发。")
+            )),
+            UsagePattern("avoir honte ~de~ **qch / faire**", "因……感到羞愧", listOf(
+                VerbExample("Il a honte de son comportement.", "他为自己的行为感到羞耻。")
+            )),
+            UsagePattern("avoir raison / tort", "有理 / 没理、错了", listOf(
+                VerbExample("Tu as raison, je me trompe.", "你说得对，是我弄错了。")
+            )),
+            UsagePattern("avoir de la chance", "运气好", listOf(
+                VerbExample("Tu as beaucoup de chance.", "你运气真好。")
+            )),
+            UsagePattern("avoir mal ~à~ **qch**", "某部位疼痛", listOf(
+                VerbExample("J'ai mal à la tête.", "我头疼。")
+            )),
+            UsagePattern("avoir le temps ~de~ **faire qch**", "有时间做某事", listOf(
+                VerbExample("Je n'ai pas le temps de cuisiner.", "我没时间做饭。")
+            )),
+            UsagePattern("avoir lieu", "发生、举行", listOf(
+                VerbExample("La fête aura lieu samedi.", "庆祝活动周六举行。")
+            )),
+            UsagePattern("avoir affaire ~à~ **qqn / qch**", "与……打交道、应付", listOf(
+                VerbExample("Nous avons affaire à un problème sérieux.", "我们要面对一个严重的问题。")
+            )),
+            UsagePattern("avoir tendance ~à~ **faire qch**", "倾向于做某事", listOf(
+                VerbExample("Il a tendance à exagérer.", "他倾向于夸大其词。")
+            )),
+            UsagePattern("avoir le droit ~de~ **faire qch**", "有权做某事", listOf(
+                VerbExample("Tu n'as pas le droit de faire ça.", "你没有权利这么做。")
+            )),
+            UsagePattern("avoir l'air + 形容词", "看起来……", listOf(
+                VerbExample("Tu as l'air fatigué.", "你看起来很累。")
+            )),
+            UsagePattern("avoir faim / soif / sommeil / froid", "饿 / 渴 / 困 / 冷", listOf(
+                VerbExample("J'ai faim et j'ai soif.", "我又饿又渴。")
+            )),
+            UsagePattern("avoir du mal ~à~ **faire qch**", "做某事很吃力", listOf(
+                VerbExample("Elle a du mal à se concentrer.", "她很难集中注意力。")
+            )),
+            UsagePattern("avoir beau **faire qch**", "徒然做某事、白费力气", listOf(
+                VerbExample("Il a beau crier, personne ne l'entend.", "他喊也是白喊，没人听见。")
             ))
         ))
         put("être", listOf(
@@ -389,6 +494,65 @@ object VerbUsages {
             )),
             UsagePattern("être ~sur~ / ~sous~ / ~devant~ + 位置", "在……上面/下面/前面", listOf(
                 VerbExample("Le chat est sur le canapé.", "猫在沙发上。")
+            )),
+            // ---- être 的固定搭配 ----
+            UsagePattern("être accompagné ~de~ **qch / qqn**", "伴随着……；由……陪同", listOf(
+                VerbExample("La fièvre est souvent accompagnée de maux de tête.", "发烧常常伴随头痛。"),
+                VerbExample("Il est accompagné de sa femme.", "他由妻子陪同。")
+            )),
+            UsagePattern("être composé ~de~ **qch**", "由……组成", listOf(
+                VerbExample("L'eau est composée d'hydrogène et d'oxygène.", "水由氢和氧组成。")
+            )),
+            UsagePattern("être couvert ~de~ **qch**", "被……覆盖、布满", listOf(
+                VerbExample("La route est couverte de neige.", "道路被雪覆盖。")
+            )),
+            UsagePattern("être rempli ~de~ **qch**", "充满……", listOf(
+                VerbExample("La salle est remplie de monde.", "大厅里挤满了人。")
+            )),
+            UsagePattern("être entouré ~de~ **qch / qqn**", "被……环绕、被……围绕", listOf(
+                VerbExample("La maison est entourée de grands arbres.", "房子被大树环绕。")
+            )),
+            UsagePattern("être suivi ~de~ **qch**", "后面跟着……", listOf(
+                VerbExample("La réunion a été suivie d'un débat.", "会议之后是讨论。")
+            )),
+            UsagePattern("être fier ~de~ **qch / qqn**", "为……感到自豪", listOf(
+                VerbExample("Je suis fier de toi.", "我为你感到骄傲。")
+            )),
+            UsagePattern("être content ~de~ **qch / faire**", "对……满意、为……高兴", listOf(
+                VerbExample("Je suis content de te revoir.", "很高兴再次见到你。")
+            )),
+            UsagePattern("être amoureux ~de~ **qqn**", "爱上某人", listOf(
+                VerbExample("Il est amoureux de sa voisine.", "他爱上了他的邻居。")
+            )),
+            UsagePattern("être responsable ~de~ **qch**", "对……负责", listOf(
+                VerbExample("Tu es responsable de tes erreurs.", "你要为自己的错误负责。")
+            )),
+            UsagePattern("être capable ~de~ **faire qch**", "有能力做某事", listOf(
+                VerbExample("Elle est capable de tout supporter.", "她能承受一切。")
+            )),
+            UsagePattern("être obligé ~de~ **faire qch**", "不得不做某事", listOf(
+                VerbExample("Je suis obligé de partir tôt.", "我不得不早点走。")
+            )),
+            UsagePattern("être en train ~de~ **faire qch**", "正在做某事", listOf(
+                VerbExample("Il est en train de téléphoner.", "他正在打电话。")
+            )),
+            UsagePattern("être sur le point ~de~ **faire qch**", "正要做某事、即将做某事", listOf(
+                VerbExample("Je suis sur le point de finir.", "我马上就要做完了。")
+            )),
+            UsagePattern("être d'accord ~avec~ **qqn**", "同意某人", listOf(
+                VerbExample("Je suis tout à fait d'accord avec toi.", "我完全同意你。")
+            )),
+            UsagePattern("être au courant ~de~ **qch**", "知道、了解某事", listOf(
+                VerbExample("Es-tu au courant de la nouvelle ?", "你知道这个消息吗？")
+            )),
+            UsagePattern("être en retard / en avance", "迟到 / 早到", listOf(
+                VerbExample("Pardonnez-moi d'être en retard.", "请原谅我迟到。")
+            )),
+            UsagePattern("être à la hauteur ~de~ **qch**", "胜任、配得上某事物", listOf(
+                VerbExample("Il est à la hauteur de nos attentes.", "他没有辜负我们的期望。")
+            )),
+            UsagePattern("être en colère", "生气", listOf(
+                VerbExample("Elle est en colère contre lui.", "她在生他的气。")
             ))
         ))
         put("aller", listOf(
@@ -491,6 +655,81 @@ object VerbUsages {
             )),
             UsagePattern("rendre **qqn** + 形容词", "使某人变得……", listOf(
                 VerbExample("Cette musique me rend triste.", "这音乐让我难过。")
+            )),
+            UsagePattern("se rendre compte ~de~ **qch**", "意识到、发觉某事物", listOf(
+                VerbExample("Je me rends compte de mon erreur.", "我意识到自己的错误。")
+            ))
+        ))
+        // ---- 常见代动词 / 动词 + de ----
+        put("occuper", listOf(
+            UsagePattern("s'occuper ~de~ **qch / qqn**", "负责、照料某事/某人", listOf(
+                VerbExample("Je m'occupe de cette affaire.", "这件事由我负责。"),
+                VerbExample("Elle s'occupe de ses parents âgés.", "她照顾年迈的父母。")
+            ))
+        ))
+        put("dépendre", listOf(
+            UsagePattern("dépendre ~de~ **qch / qqn**", "取决于、依赖于", listOf(
+                VerbExample("Tout dépend de la météo.", "一切取决于天气。")
+            ))
+        ))
+        put("manquer", listOf(
+            UsagePattern("manquer ~de~ **qch**", "缺乏某物", listOf(
+                VerbExample("Il manque de patience.", "他缺乏耐心。")
+            )),
+            UsagePattern("manquer ~à~ **qqn**", "使某人想念；辜负某人", listOf(
+                VerbExample("Tu me manques beaucoup.", "我很想你。"),
+                VerbExample("Il a manqué à sa promesse.", "他没能兑现诺言。")
+            ))
+        ))
+        put("moquer", listOf(
+            UsagePattern("se moquer ~de~ **qqn / qch**", "嘲笑、取笑某人某物", listOf(
+                VerbExample("Ne te moque pas de lui.", "别嘲笑他。")
+            ))
+        ))
+        put("plaindre", listOf(
+            UsagePattern("se plaindre ~de~ **qch / qqn**", "抱怨、投诉", listOf(
+                VerbExample("Il se plaint de la chaleur.", "他抱怨天气热。")
+            ))
+        ))
+        put("douter", listOf(
+            UsagePattern("douter ~de~ **qch / qqn**", "怀疑、不相信", listOf(
+                VerbExample("Je doute de ses intentions.", "我怀疑他的动机。")
+            ))
+        ))
+        put("apercevoir", listOf(
+            UsagePattern("apercevoir **qch / qqn**", "瞥见、望见", listOf(
+                VerbExample("J'ai aperçu un ami dans la foule.", "我在人群中瞥见一位朋友。")
+            )),
+            UsagePattern("s'apercevoir ~de~ **qch**", "察觉到、发现", listOf(
+                VerbExample("Je me suis aperçu de mon erreur.", "我发现了自己的错误。")
+            ))
+        ))
+        put("participer", listOf(
+            UsagePattern("participer ~à~ **qch**", "参加、参与某事", listOf(
+                VerbExample("Elle participe à un concours.", "她参加一个比赛。")
+            ))
+        ))
+        put("assister", listOf(
+            UsagePattern("assister ~à~ **qch**", "出席、参加（活动）", listOf(
+                VerbExample("Nous avons assisté à la réunion.", "我们出席了会议。")
+            )),
+            UsagePattern("assister **qqn**", "协助、帮助某人", listOf(
+                VerbExample("Un médecin assiste le chirurgien.", "一位医生协助外科医生。")
+            ))
+        ))
+        put("agir", listOf(
+            UsagePattern("il s'agit ~de~ **qch / faire**", "涉及、关于某事", listOf(
+                VerbExample("Il s'agit d'un malentendu.", "这是一场误会。")
+            ))
+        ))
+        put("approcher", listOf(
+            UsagePattern("s'approcher ~de~ **qqn / qch**", "靠近、走近某人某物", listOf(
+                VerbExample("Ne t'approche pas du feu.", "别靠近火。")
+            ))
+        ))
+        put("éloigner", listOf(
+            UsagePattern("s'éloigner ~de~ **qch / qqn**", "远离……、疏远", listOf(
+                VerbExample("Il s'est éloigné de sa famille.", "他疏远了他的家人。")
             ))
         ))
         }
@@ -506,6 +745,9 @@ object VerbUsages {
         if (key.startsWith("s'")) {
             dataSet[key.removePrefix("s'")]?.let { return it }
         }
+        // 反向代动词别名：查原形时，数据以代动词形式收录（attendre → s'attendre、occuper → s'occuper）
+        dataSet["se $key"]?.let { return it }
+        dataSet["s'$key"]?.let { return it }
         return emptyList()
     }
 

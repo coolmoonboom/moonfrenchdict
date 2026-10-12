@@ -13,8 +13,8 @@ android {
         applicationId = "com.coolmoonfrench.dict"
         minSdk = 24
         targetSdk = 34
-        versionCode = 60
-        versionName = "1.0.60"
+        versionCode = 61
+        versionName = "1.0.61"
 
         // ffmpeg-kit 仅提供 arm64/x86_64，32 位设备本就不支持视频转文字；
         // 去掉 armeabi-v7a 减 37MB。

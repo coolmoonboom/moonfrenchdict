@@ -42,6 +42,46 @@ class VerbUsagesTest {
         }
     }
 
+    // ---------- 固定搭配（动词 + 介词 / faire-être-avoir） ----------
+    @Test fun faireFixedCollocations() {
+        val patterns = VerbUsages.patternsOf("faire")
+        val preuve = patterns.firstOrNull { it.pattern.contains("faire preuve") }
+        assertNotNull("faire preuve de qch 应被收录", preuve)
+        assertTrue("faire preuve de 应高亮 de", preuve!!.pattern.contains("~de~"))
+        assertTrue("faire preuve de 应有例句", preuve.examples.isNotEmpty())
+        assertTrue(patterns.any { it.pattern.contains("faire partie") })
+        assertTrue(patterns.any { it.pattern.contains("faire attention") })
+    }
+
+    @Test fun etreFixedCollocations() {
+        val patterns = VerbUsages.patternsOf("être")
+        val accompagne = patterns.firstOrNull { it.pattern.contains("accompagné") }
+        assertNotNull("être accompagné de 应被收录", accompagne)
+        assertTrue("être accompagné de 应高亮 de", accompagne!!.pattern.contains("~de~"))
+        assertTrue(patterns.any { it.pattern.contains("être en train") })
+        assertTrue(patterns.any { it.pattern.contains("être d'accord") })
+    }
+
+    @Test fun avoirFixedCollocations() {
+        val patterns = VerbUsages.patternsOf("avoir")
+        assertTrue(patterns.any { it.pattern.contains("avoir mal") && it.pattern.contains("~à~") })
+        assertTrue(patterns.any { it.pattern.contains("avoir lieu") })
+        assertTrue(patterns.any { it.pattern.contains("avoir envie") })
+    }
+
+    @Test fun reversePronominalLookup() {
+        // 数据以代动词形式收录时，查原形也应命中
+        assertTrue(VerbUsages.patternsOf("attendre").any { it.pattern.contains("s'attendre") })
+        assertTrue(VerbUsages.patternsOf("servir").any { it.pattern.contains("se servir") })
+        assertTrue(VerbUsages.patternsOf("occuper").any { it.pattern.contains("s'occuper") })
+    }
+
+    @Test fun verbPrepositionCollocations() {
+        assertTrue(VerbUsages.patternsOf("dépendre").any { it.pattern.contains("~de~") })
+        assertTrue(VerbUsages.patternsOf("participer").any { it.pattern.contains("~à~") })
+        assertTrue(VerbUsages.patternsOf("manquer").size >= 2)
+    }
+
     // ---------- 全部时态语态 ----------
     @Test fun activeAllTensesGenerated() {
         val c = conj.conjugate("manger")!!

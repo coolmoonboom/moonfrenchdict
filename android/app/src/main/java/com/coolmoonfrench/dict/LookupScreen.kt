@@ -76,6 +76,18 @@ internal fun detectContraction(text: String): Contraction? {
     return Contraction(t, full, base)
 }
 
+/**
+ * 查词结果若为动词，解析其句型用法（动词 + 介词搭配、faire/être/avoir 等固定组合）。
+ * 先按词头直接命中；未命中且能反查原形时再按原形命中，避免对无关词做昂贵扫描。
+ */
+private fun resolveVerbPatterns(conjugator: VerbConjugator, word: String): List<UsagePattern> {
+    if (word.isBlank()) return emptyList()
+    VerbUsages.patternsOf(word).takeIf { it.isNotEmpty() }?.let { return it }
+    val inf = conjugator.findInfinitive(word) ?: return emptyList()
+    if (inf.equals(word, ignoreCase = true)) return emptyList()
+    return VerbUsages.patternsOf(inf)
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun LookupScreen(
@@ -98,6 +110,8 @@ fun LookupScreen(
     var translateError by remember { mutableStateOf<String?>(null) }
     var expansion by remember { mutableStateOf<String?>(null) }
     var breakdown by remember { mutableStateOf<WordBreakdown?>(null) }
+    // 动词句型用法（动词 + 介词搭配、faire/être/avoir 等固定组合）
+    var verbPatterns by remember { mutableStateOf<List<UsagePattern>>(emptyList()) }
     // 中文输入：翻译成法语后的结果与状态
     var zhToFr by remember { mutableStateOf<MyMemoryTranslator.TranslateResult?>(null) }
     var zhTranslating by remember { mutableStateOf(false) }
@@ -139,6 +153,9 @@ fun LookupScreen(
             withContext(Dispatchers.IO) { repository.addHistory(fr) }
             val first = exact.first()
             val verb = withContext(Dispatchers.IO) { conjugator.isVerb(first.word) }
+            val patterns = if (verb) withContext(Dispatchers.IO) {
+                resolveVerbPatterns(conjugator, first.word)
+            } else emptyList()
             // 近似词/词根词/词形分析均走后台
             val sim = withContext(Dispatchers.IO) { repository.similarWords(fr) }
             val rel = withContext(Dispatchers.IO) { repository.relatedWords(fr) }
@@ -148,6 +165,7 @@ fun LookupScreen(
                 selected = first
                 contractionSurface = null
                 expansion = if (verb) "动词原形：${first.word}" else null
+                verbPatterns = patterns
                 similar = sim
                 related = rel
                 derived = der
@@ -158,6 +176,9 @@ fun LookupScreen(
             val baseExact = withContext(Dispatchers.IO) { repository.lookupExact(contraction.base) }
             val first = baseExact.firstOrNull()
             val verb = first?.let { withContext(Dispatchers.IO) { conjugator.isVerb(it.word) } } ?: false
+            val patterns = if (verb && first != null) withContext(Dispatchers.IO) {
+                resolveVerbPatterns(conjugator, first.word)
+            } else emptyList()
             val sim = withContext(Dispatchers.IO) { repository.similarWords(contraction.base) }
             val rel = withContext(Dispatchers.IO) { repository.relatedWords(contraction.base) }
             val der = withContext(Dispatchers.IO) { repository.derivedWords(contraction.base) }
@@ -167,7 +188,8 @@ fun LookupScreen(
                 contractionSurface = contraction.surface
                 contractionPrefix = contraction.prefix
                 contractionBase = contraction.base
-                expansion = if (verb) "动词原形：${first.word}" else null
+                expansion = if (verb) "动词原形：${first?.word ?: ""}" else null
+                verbPatterns = patterns
                 similar = sim
                 related = rel
                 derived = der
@@ -186,6 +208,7 @@ fun LookupScreen(
                 related = rel
                 derived = der
                 breakdown = bd
+                verbPatterns = emptyList()
                 expansion = if (verb) "动词原形：$fr" else null
             }
         }
@@ -197,6 +220,7 @@ fun LookupScreen(
         onlineResult = null
         expansion = null
         breakdown = null
+        verbPatterns = emptyList()
         contractionSurface = null
         contractionPrefix = ""
         contractionBase = ""
@@ -355,6 +379,20 @@ fun LookupScreen(
             favoriteWords = favoriteWords + word
             Toast.makeText(context, "加入收藏成功", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // 点选相近/同根/派生/前缀建议词条：切换到该词条并同步动词用法
+    fun applyEntry(e: DictEntry) {
+        searchJob?.cancel()
+        selected = e
+        query = e.word
+        frenchTerm = e.word
+        zhToFr = null
+        zhTranslating = false
+        expansion = null
+        onlineResult = null
+        breakdown = morphology.analyze(e.word, repository)
+        verbPatterns = if (conjugator.isVerb(e.word)) VerbUsages.patternsOf(e.word) else emptyList()
     }
 
     // 手动点「AI 查询」：无视本地命中，直接把当前输入交给 AI 识别查询
@@ -550,17 +588,7 @@ fun LookupScreen(
                         ) {
                             items(zhAlternatives) { e ->
                                 Card(
-                                    onClick = {
-                                        searchJob?.cancel()
-                                        selected = e
-                                        query = e.word
-                                        frenchTerm = e.word
-                                        zhToFr = null
-                                        zhTranslating = false
-                                        expansion = null
-                                        onlineResult = null
-                                        breakdown = morphology.analyze(e.word, repository)
-                                    },
+                                    onClick = { applyEntry(e) },
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.secondaryContainer
                                     )
@@ -855,6 +883,16 @@ fun LookupScreen(
                         }
                     }
 
+                    // 动词句型用法：动词 + 介词搭配、faire/être/avoir 等固定组合
+                    if (verbPatterns.isNotEmpty()) {
+                        item {
+                            VerbUsageCard(
+                                verbPatterns,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
                     // 自动翻译兜底（本地无中文时）：优先 AI，未配置回退 MyMemory
                     item {
                         LaunchedEffect(entry.word) {
@@ -1045,7 +1083,7 @@ fun LookupScreen(
                         ) {
                             items(similar) { e ->
                                 Card(
-                                    onClick = { selected = e; query = e.word; frenchTerm = e.word; zhToFr = null; expansion = null; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
+                                    onClick = { applyEntry(e) },
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                                     )
@@ -1089,7 +1127,7 @@ fun LookupScreen(
                         ) {
                             items(related) { e ->
                                 Card(
-                                    onClick = { selected = e; query = e.word; frenchTerm = e.word; zhToFr = null; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
+                                    onClick = { applyEntry(e) },
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.secondaryContainer
                                     )
@@ -1133,7 +1171,7 @@ fun LookupScreen(
                         ) {
                             items(derived) { e ->
                                 Card(
-                                    onClick = { selected = e; query = e.word; frenchTerm = e.word; zhToFr = null; onlineResult = null; breakdown = morphology.analyze(e.word, repository) },
+                                    onClick = { applyEntry(e) },
                                     colors = CardDefaults.cardColors(
                                         containerColor = MaterialTheme.colorScheme.tertiaryContainer
                                     )
@@ -1179,6 +1217,8 @@ fun LookupScreen(
                                     frenchTerm = entry.word
                                     zhToFr = null
                                     onlineResult = null
+                                    verbPatterns =
+                                        if (conjugator.isVerb(entry.word)) VerbUsages.patternsOf(entry.word) else emptyList()
                                     searchJob?.cancel()
                                     searchJob = scope.launch {
                                         val sim = withContext(Dispatchers.IO) { repository.similarWords(entry.word) }

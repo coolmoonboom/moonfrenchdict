@@ -33,3 +33,13 @@ This file records user instructions, preferences, and teachings for reference in
   - 用 -m/-c 内联中文长参数给 git commits/gh release 时，字符串可能被随机插入乱码token（如 newco、IZAR）。
   - 规避：长中文文本先 printf 写入临时文件并 cat 校验，再用 marker heredoc 或 -F/$(cat file) 传入。
   - 推送前必须 git log -1 --format=%B / gh release view 核验实际内容，发现污染用 git commit --amend -F(--title) 修正。
+
+[sandbox 无法跑 Android 编译/单测]
+- Date: 2026-10-12
+- Context: Discovered by Agent while trying to verify VerbUsages/LookupScreen changes
+- Category: Environment Configuration
+- Instructions:
+  - 当前开发沙箱未预装 JDK / Gradle / Android SDK，且 gradle 路径 `/opt/gradle-9.3.1/bin/gradle` 与 `/usr/lib/jvm` 均不存在（与旧构建记录不同）。
+  - `dictionary.db`、`tools/data/word.sj`、`assets/vosk` 等大文件是 Git LFS 占位符（133 字节的 pointer），本地无真实数据。
+  - 主机 MemTotal ~8GB 但 MemAvailable 仅 160-290MB 且无 swap：Kotlin/Gradle 编译 daemon 需 ≥1GB，跑 `:app:testDebugUnitTest` 会 OOM，勿在此环境尝试安装 SDK 并整包构建。
+  - 纯字典逻辑类改动（VerbUsages 数据表、pure helper）靠静态审查（括号平衡、put 键去重、模式匹配）验证；整包构建/单测只在具备 JDK17 + Gradle 9.x + Android SDK + 真实 LFS 资产的环境执行。
